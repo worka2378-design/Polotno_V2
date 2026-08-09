@@ -1,0 +1,132 @@
+@import "tailwindcss";
+
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+
+@theme {
+  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-serif: 'Playfair Display', Georgia, serif;
+  --font-mono: 'Fira Code', ui-monospace, monospace;
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+  body {
+    @apply antialiased bg-[#f7f4ee] text-stone-900 selection:bg-black/10;
+  }
+}
+
+/* Custom scrollbar hiding utility */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 5px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(120, 120, 120, 0.3);
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 120, 120, 0.5);
+}
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 120, 120, 0.3) transparent;
+}
+
+/* Round checkboxes for planner lists */
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid rgba(0, 0, 0, 0.35);
+  border-radius: 50% !important;
+  outline: none;
+  cursor: pointer;
+  vertical-align: middle;
+  position: relative;
+  transition: all 0.15s ease;
+  background-color: transparent;
+  flex-shrink: 0;
+  margin: 0;
+}
+
+input[type="checkbox"]:hover {
+  border-color: rgba(0, 0, 0, 0.7);
+}
+
+input[type="checkbox"]:checked {
+  background-color: #18181b;
+  border-color: #18181b;
+}
+
+input[type="checkbox"]:checked::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 5px;
+  width: 4px;
+  height: 8px;
+  border: solid #ffffff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* List styles for editable note content & exported HTML */
+[contenteditable] ul,
+.note-content ul {
+  list-style-type: disc !important;
+  padding-left: 1.25rem !important;
+  margin-top: 0.25rem !important;
+  margin-bottom: 0.25rem !important;
+}
+
+[contenteditable] ol,
+.note-content ol {
+  list-style-type: decimal !important;
+  padding-left: 1.25rem !important;
+  margin-top: 0.25rem !important;
+  margin-bottom: 0.25rem !important;
+}
+
+/* Backlink wiki chips inside notes */
+.note-backlink-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.5rem;
+  margin: 0.125rem 0.125rem;
+  border-radius: 9999px;
+  background-color: rgba(24, 24, 27, 0.08);
+  color: #18181b;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border: 1px solid rgba(24, 24, 27, 0.15);
+  cursor: pointer;
+  user-select: none;
+  text-decoration: none !important;
+  transition: all 0.15s ease;
+}
+
+.note-backlink-chip:hover {
+  background-color: rgba(24, 24, 27, 0.16);
+  border-color: rgba(24, 24, 27, 0.3);
+}
+
+
+[contenteditable] li,
+.note-content li {
+  display: list-item !important;
+  margin-top: 0.125rem !important;
+  margin-bottom: 0.125rem !important;
+}

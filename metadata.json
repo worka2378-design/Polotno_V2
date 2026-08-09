@@ -1,0 +1,6 @@
+{
+  "name": "Infinite Canvas Notepad",
+  "description": "A minimalist, ultra-modern infinite canvas notepad with sticky notes, freehand drawing, formatting, and encrypted vault storage.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
