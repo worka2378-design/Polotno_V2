@@ -37,6 +37,22 @@ SCOPES.forEach((scope) => provider.addScope(scope));
 const TOKEN_STORAGE_KEY = 'gdrive_access_token';
 const TOKEN_TIME_KEY = 'gdrive_access_token_time';
 
+export class DriveTokenExpiredError extends Error {
+  isTokenExpired: boolean = true;
+  constructor(message: string = 'Термін дії токена Google закінчився (1 година). Будь ласка, увійдіть знову через Google.') {
+    super(message);
+    this.name = 'DriveTokenExpiredError';
+  }
+}
+
+export class DrivePermissionError extends Error {
+  isPermissionDenied: boolean = true;
+  constructor(message: string = 'Увійдіть повторно та надайте дозволи на доступ до Google Drive і Calendar.') {
+    super(message);
+    this.name = 'DrivePermissionError';
+  }
+}
+
 function getStoredAccessToken(): string | null {
   try {
     const timeStr = localStorage.getItem(TOKEN_TIME_KEY);
@@ -77,9 +93,24 @@ export function isAIStudioEnvironment(): boolean {
 }
 
 export function formatAuthError(error: any): string {
+  if (error?.isTokenExpired || error?.name === 'DriveTokenExpiredError') {
+    return 'Термін дії токена Google закінчився. Будь ласка, увійдіть знову через Google.';
+  }
+  if (error?.isPermissionDenied || error?.name === 'DrivePermissionError') {
+    return 'Увійдіть повторно та надайте дозволи на доступ до Google Drive і Calendar.';
+  }
+  const msg = error?.message || '';
+  if (msg.includes('401') || msg.toLowerCase().includes('unauthenticated') || msg.includes('протух')) {
+    return 'Термін дії токена Google закінчився. Будь ласка, увійдіть знову через Google.';
+  }
+  if (msg.toLowerCase().includes('insufficient') || msg.includes('PERMISSION_DENIED')) {
+    return 'Увійдіть повторно та надайте дозволи на доступ до Google Drive і Calendar.';
+  }
+
   const code = error?.code || '';
   if (code === 'auth/unauthorized-domain') {
-    return 'Цей домен не додано в дозволені OAuth-домени Firebase/Google Cloud проєкту. Скористайтеся локальним завантаженням або відновленням з файлу (.json).';
+    const domain = typeof window !== 'undefined' ? window.location.hostname : 'поточний домен';
+    return `Домен (${domain}) не додано у "Authorized domains" Firebase проєкту. Додайте його у Firebase Console або скористайтеся бекапом у файл (.json).`;
   }
   if (code === 'auth/popup-closed-by-user') {
     return 'Вікно авторизації Google було закрито.';
@@ -93,14 +124,38 @@ export function formatAuthError(error: any): string {
   if (code === 'auth/invalid-api-key' || code === 'auth/configuration-not-found') {
     return 'Некоректна конфігурація OAuth ключа Firebase.';
   }
-  return error?.message || 'Помилка авторизації Google';
+  return msg || 'Помилка авторизації Google';
 }
 
 export const initDriveAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
-  return onAuthStateChanged(auth, async (user) => {
+  // Silent refresh interval check every 15 minutes while active
+  const interval = setInterval(async () => {
+    const tokenTime = localStorage.getItem(TOKEN_TIME_KEY);
+    if (tokenTime) {
+      const elapsedMs = Date.now() - parseInt(tokenTime, 10);
+      if (elapsedMs > 40 * 60 * 1000) {
+        // Attempt background silent refresh
+        try {
+          if (isAIStudioEnvironment()) {
+            const freshToken = await (window as any).__getGoogleAuthToken(SCOPES);
+            if (freshToken) {
+              setStoredAccessToken(freshToken);
+            }
+          } else {
+            // Check if token expired
+            getStoredAccessToken();
+          }
+        } catch {
+          setStoredAccessToken(null);
+        }
+      }
+    }
+  }, 15 * 60 * 1000);
+
+  const unsubscribe = onAuthStateChanged(auth, async (user) => {
     if (user) {
       const token = cachedAccessToken || getStoredAccessToken();
       if (token) {
@@ -114,6 +169,11 @@ export const initDriveAuth = (
       if (onAuthFailure) onAuthFailure();
     }
   });
+
+  return () => {
+    clearInterval(interval);
+    unsubscribe();
+  };
 };
 
 export const signInWithGoogleDrive = async (): Promise<{ user: User; accessToken: string } | null> => {
@@ -160,11 +220,11 @@ export async function getGoogleDriveToken(): Promise<string> {
     return token;
   }
 
-  throw new Error('Потрібно увійти через Google акаунт для доступу до Google Drive');
+  throw new DriveTokenExpiredError('Потрібно увійти через Google акаунт для доступу до Google Drive');
 }
 
 /**
- * Fetch wrapper with automatic token management and 401 retry refresh handling
+ * Unified fetch wrapper with automatic token management, 401 silent refresh handling, and 403 permission handling
  */
 export async function fetchWithDriveAuth(
   url: string,
@@ -172,15 +232,8 @@ export async function fetchWithDriveAuth(
 ): Promise<Response> {
   let token = await getGoogleDriveToken().catch(() => null);
 
-  if (!token && auth.currentUser) {
-    try {
-      const reAuth = await signInWithGoogleDrive();
-      token = reAuth?.accessToken || null;
-    } catch (e) {}
-  }
-
   if (!token) {
-    throw new Error('Потрібно увійти через Google акаунт для доступу до Google Drive');
+    throw new DriveTokenExpiredError('Потрібно увійти через Google акаунт для доступу до Google Drive / Calendar');
   }
 
   const headers = new Headers(options.headers || {});
@@ -188,37 +241,46 @@ export async function fetchWithDriveAuth(
 
   let res = await fetch(url, { ...options, headers });
 
-  // Handle 401 Unauthorized (expired token) automatically
+  // Handle 401 Unauthorized (expired token)
   if (res.status === 401) {
     setStoredAccessToken(null);
 
+    let freshToken: string | null = null;
     if (isAIStudioEnvironment()) {
       try {
-        const freshToken = await (window as any).__getGoogleAuthToken(SCOPES);
-        if (freshToken) {
-          setStoredAccessToken(freshToken);
-          headers.set('Authorization', `Bearer ${freshToken}`);
-          res = await fetch(url, { ...options, headers });
-          if (res.ok) return res;
-        }
+        freshToken = await (window as any).__getGoogleAuthToken(SCOPES);
       } catch (e) {}
     }
 
-    if (auth.currentUser) {
-      try {
-        const reAuthResult = await signInWithGoogleDrive();
-        if (reAuthResult?.accessToken) {
-          headers.set('Authorization', `Bearer ${reAuthResult.accessToken}`);
-          res = await fetch(url, { ...options, headers });
-        }
-      } catch (reAuthErr) {
-        throw new Error('Термін дії токена Google Drive закінчився (1 година). Будь ласка, увійдіть знову через Google.');
-      }
+    if (freshToken) {
+      setStoredAccessToken(freshToken);
+      headers.set('Authorization', `Bearer ${freshToken}`);
+      res = await fetch(url, { ...options, headers });
+      if (res.ok) return res;
+    }
+
+    if (!res.ok) {
+      setStoredAccessToken(null);
+      throw new DriveTokenExpiredError('Термін дії токена Google закінчився (1 година). Будь ласка, увійдіть знову через Google.');
+    }
+  }
+
+  // Handle 403 Forbidden (insufficient permissions/scopes)
+  if (res.status === 403) {
+    const errText = await res.clone().text().catch(() => '');
+    if (
+      errText.toLowerCase().includes('insufficient') ||
+      errText.includes('PERMISSION_DENIED') ||
+      errText.includes('ACCESS_TOKEN_SCOPE_INSUFFICIENT')
+    ) {
+      throw new DrivePermissionError('Увійдіть повторно та надайте дозволи на доступ до Google Drive і Calendar.');
     }
   }
 
   return res;
 }
+
+export const driveApiFetch = fetchWithDriveAuth;
 
 /**
  * Find existing board backup file in Google Drive

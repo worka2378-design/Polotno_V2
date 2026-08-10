@@ -90,6 +90,7 @@ export const GoogleDriveModal: React.FC<GoogleDriveModalProps> = ({
   const [activeTab, setActiveTab] = useState<'backup' | 'files' | 'calendar'>(initialTab);
   const [currentUser, setCurrentUser] = useState<User | null>(getCurrentDriveUser());
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   // Backup state
   const [isSaving, setIsSaving] = useState(false);
@@ -192,6 +193,7 @@ export const GoogleDriveModal: React.FC<GoogleDriveModalProps> = ({
 
   const handleGoogleLogin = async () => {
     setIsLoggingIn(true);
+    setLoginError(null);
     setBackupError(null);
     setFilesError(null);
     try {
@@ -203,7 +205,9 @@ export const GoogleDriveModal: React.FC<GoogleDriveModalProps> = ({
         }
       }
     } catch (err: any) {
-      setBackupError(formatAuthError(err));
+      const formatted = formatAuthError(err);
+      setLoginError(formatted);
+      setBackupError(formatted);
     } finally {
       setIsLoggingIn(false);
     }
@@ -212,6 +216,7 @@ export const GoogleDriveModal: React.FC<GoogleDriveModalProps> = ({
   const handleGoogleLogout = async () => {
     await signOutGoogleDrive();
     setCurrentUser(null);
+    setLoginError(null);
   };
 
   // Check backup status on open
@@ -398,7 +403,14 @@ export const GoogleDriveModal: React.FC<GoogleDriveModalProps> = ({
               )}
             </div>
 
-            {!isAIStudioEnvironment() && !currentUser && (
+            {loginError && (
+              <div className="flex items-start gap-2 p-2.5 bg-amber-100/80 border border-amber-300 rounded-2xl text-xs text-amber-950 leading-relaxed">
+                <AlertCircle className="w-4 h-4 text-amber-800 shrink-0 mt-0.5" />
+                <span className="flex-1">{loginError}</span>
+              </div>
+            )}
+
+            {!isAIStudioEnvironment() && !currentUser && !loginError && (
               <p className="text-[11px] text-stone-500 px-2 leading-relaxed">
                 Поза середовищем AI Studio авторизація Google залежить від дозволених доменів вашого Firebase проєкту.
               </p>

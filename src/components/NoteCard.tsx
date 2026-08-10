@@ -7,6 +7,7 @@ import { Note } from '../types';
 import { NOTE_COLOR_CLASSES, FONT_CLASSES, FONT_SIZE_CLASSES, FONT_FAMILY_STYLES } from '../utils/theme';
 import { deleteAttachmentData } from '../utils/attachmentStorage';
 import { isUrl, createLinkCardHtml, convertTextUrlsToLinkCards, ensureLinkCardsUpToDate, escapeHtml } from '../utils/linkUtils';
+import { convertMarkdownToHtml } from '../utils/markdownUtils';
 
 interface NoteCardProps {
   note: Note;
@@ -410,7 +411,7 @@ export const NoteCard: React.FC<NoteCardProps> = React.memo(({
       if (cleaned.trim().length > 0) {
         document.execCommand('insertHTML', false, cleaned);
       } else if (pasteText) {
-        const formattedText = convertTextUrlsToLinkCards(escapeHtml(pasteText).replace(/\r\n|\r|\n/g, '<br/>'));
+        const formattedText = convertTextUrlsToLinkCards(convertMarkdownToHtml(pasteText));
         document.execCommand('insertHTML', false, formattedText);
       }
       handleInput();
@@ -418,10 +419,10 @@ export const NoteCard: React.FC<NoteCardProps> = React.memo(({
       return;
     }
 
-    // Case 3: Plain text with newlines or embedded URLs -> preserve lines & convert URLs
+    // Case 3: Plain text / Markdown with newlines or embedded URLs -> parse markdown & convert URLs
     if (pasteText) {
       e.preventDefault();
-      const formattedText = convertTextUrlsToLinkCards(escapeHtml(pasteText).replace(/\r\n|\r|\n/g, '<br/>'));
+      const formattedText = convertTextUrlsToLinkCards(convertMarkdownToHtml(pasteText));
       document.execCommand('insertHTML', false, formattedText);
       handleInput();
       onUpdateEnd?.();

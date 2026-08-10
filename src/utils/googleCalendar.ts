@@ -1,4 +1,4 @@
-import { getGoogleDriveToken } from './googleDrive';
+import { fetchWithDriveAuth } from './googleDrive';
 
 export interface CalendarEvent {
   id: string;
@@ -29,13 +29,10 @@ export interface CreateEventInput {
  * List upcoming calendar events from Google Calendar API
  */
 export async function listCalendarEvents(): Promise<CalendarEvent[]> {
-  const token = await getGoogleDriveToken();
   const now = new Date().toISOString();
   const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(now)}&singleEvents=true&orderBy=startTime&maxResults=30`;
 
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const res = await fetchWithDriveAuth(url);
 
   if (!res.ok) {
     const errText = await res.text();
@@ -50,8 +47,6 @@ export async function listCalendarEvents(): Promise<CalendarEvent[]> {
  * Create a new event in Google Calendar
  */
 export async function createCalendarEvent(input: CreateEventInput): Promise<CalendarEvent> {
-  const token = await getGoogleDriveToken();
-
   const body: any = {
     summary: input.summary,
     description: input.description,
@@ -65,10 +60,9 @@ export async function createCalendarEvent(input: CreateEventInput): Promise<Cale
     body.end = { dateTime: new Date(input.endDateTime).toISOString() };
   }
 
-  const res = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+  const res = await fetchWithDriveAuth('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
@@ -86,10 +80,8 @@ export async function createCalendarEvent(input: CreateEventInput): Promise<Cale
  * Delete a calendar event
  */
 export async function deleteCalendarEvent(eventId: string): Promise<void> {
-  const token = await getGoogleDriveToken();
-  const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`, {
+  const res = await fetchWithDriveAuth(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`, {
     method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}` },
   });
 
   if (!res.ok && res.status !== 404) {

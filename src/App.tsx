@@ -10,12 +10,13 @@ import { createPlannerHTML } from './utils/planner';
 import { createSwotHTML } from './utils/swot';
 import { encryptVault } from './utils/crypto';
 import { isUrl, createLinkCardHtml, escapeHtml } from './utils/linkUtils';
+import { convertMarkdownToHtml } from './utils/markdownUtils';
 
 import { LayersPanel } from './components/LayersPanel';
 import { GoogleDriveModal } from './components/GoogleDriveModal';
 import { ToastContainer, ToastMessage } from './components/ToastContainer';
 import { Minimap } from './components/Minimap';
-import { saveBoardToDrive, uploadFileToDrive, getCurrentDriveUser } from './utils/googleDrive';
+import { saveBoardToDrive, uploadFileToDrive, getCurrentDriveUser, initDriveAuth } from './utils/googleDrive';
 import { saveAttachmentData, getAllAttachmentsData, deleteAttachmentData } from './utils/attachmentStorage';
 import { AnimatePresence } from 'motion/react';
 
@@ -352,7 +353,7 @@ export default function App() {
   // Google Drive & Network Integration State
   const [isTemplatePickerOpen, setIsTemplatePickerOpen] = useState<boolean>(false);
   const [isOnline, setIsOnline] = useState<boolean>(() => typeof navigator !== 'undefined' ? navigator.onLine : true);
-  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'offline' | 'error'>('idle');
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'offline' | 'error' | 'signed_out'>('idle');
   const [autoSaveDrive, setAutoSaveDrive] = useState<boolean>(() => {
     return localStorage.getItem('google_drive_autosave') === 'true';
   });
@@ -360,6 +361,10 @@ export default function App() {
     const saved = localStorage.getItem('google_drive_last_sync');
     return saved ? parseInt(saved, 10) : null;
   });
+
+  const cachedDriveFileIdRef = useRef<string | null>(localStorage.getItem('gdrive_backup_file_id'));
+  const isSavingToDriveRef = useRef<boolean>(false);
+  const hasWarnedLoggedOutRef = useRef<boolean>(false);
 
   const handleToggleAutoSaveDrive = (enabled: boolean) => {
     setAutoSaveDrive(enabled);
@@ -473,26 +478,115 @@ export default function App() {
     if (restoredData.canvasScale) setScale(restoredData.canvasScale);
   };
 
+  // Toast notifications state
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  const addToast = useCallback(
+    (
+      type: 'info' | 'error' | 'warning' | 'success',
+      message: string,
+      title?: string,
+      actionLabel?: string,
+      onAction?: () => void
+    ) => {
+      const id = 'toast_' + Date.now() + '_' + Math.random().toString(36).substring(2, 5);
+      setToasts((prev) => [...prev, { id, type, message, title, actionLabel, onAction }]);
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== id));
+      }, actionLabel ? 8000 : 5000);
+    },
+    []
+  );
+
+  const handleDismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  // Monitor Google Auth state to handle signed out status & notify on startup
+  useEffect(() => {
+    const unsubscribe = initDriveAuth(
+      (_user) => {
+        if (autoSaveDrive) {
+          setSyncStatus('idle');
+        }
+      },
+      () => {
+        if (localStorage.getItem('google_drive_autosave') === 'true') {
+          setSyncStatus('signed_out');
+          if (!hasWarnedLoggedOutRef.current) {
+            hasWarnedLoggedOutRef.current = true;
+            addToast(
+              'warning',
+              'Автозбереження на Диск увімкнено, але ви не увійшли в акаунт Google',
+              'Google Drive',
+              'Увійдіть',
+              () => setIsDriveModalOpen(true)
+            );
+          }
+        }
+      }
+    );
+    return () => {
+      unsubscribe();
+    };
+  }, [autoSaveDrive, addToast]);
+
+  const performDriveSave = useCallback(async () => {
+    if (!autoSaveDrive) return;
+    if (notesRef.current.length === 0) return;
+    if (!navigator.onLine) {
+      setSyncStatus('offline');
+      return;
+    }
+
+    const driveUser = getCurrentDriveUser();
+    if (!driveUser) {
+      setSyncStatus('signed_out');
+      return;
+    }
+
+    if (isSavingToDriveRef.current) {
+      return;
+    }
+
+    try {
+      isSavingToDriveRef.current = true;
+      setSyncStatus('syncing');
+
+      const boardData = {
+        notes: notesRef.current,
+        canvasOffset: offset,
+        canvasScale: scale,
+        version: 1,
+      };
+
+      const res = await saveBoardToDrive(boardData, cachedDriveFileIdRef.current || undefined);
+      if (res?.fileId) {
+        cachedDriveFileIdRef.current = res.fileId;
+        localStorage.setItem('gdrive_backup_file_id', res.fileId);
+      }
+
+      const now = Date.now();
+      handleSyncComplete(now);
+      setSyncStatus('synced');
+    } catch (e: any) {
+      console.error('Auto-save to Google Drive failed:', e);
+      if (e?.isTokenExpired || e?.name === 'DriveTokenExpiredError' || e?.message?.includes('401')) {
+        setSyncStatus('signed_out');
+      } else {
+        setSyncStatus('error');
+      }
+    } finally {
+      isSavingToDriveRef.current = false;
+    }
+  }, [autoSaveDrive, offset, scale]);
+
   // Network Status and Automatic Offline-First Queue Handler
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
       if (autoSaveDrive && notesRef.current.length > 0) {
-        setSyncStatus('syncing');
-        saveBoardToDrive({
-          notes: notesRef.current,
-          canvasOffset: offset,
-          canvasScale: scale,
-          version: 1,
-        })
-          .then(() => {
-            const now = Date.now();
-            handleSyncComplete(now);
-            setSyncStatus('synced');
-          })
-          .catch(() => {
-            setSyncStatus('error');
-          });
+        performDriveSave();
       } else {
         setSyncStatus('idle');
       }
@@ -509,13 +603,18 @@ export default function App() {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, [autoSaveDrive, offset, scale]);
+  }, [autoSaveDrive, performDriveSave]);
 
   // Debounced Auto-Save to Google Drive with Realtime Sync Status
   const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   useEffect(() => {
     if (!autoSaveDrive) return;
     if (notes.length === 0) return;
+
+    if (!getCurrentDriveUser()) {
+      setSyncStatus('signed_out');
+      return;
+    }
 
     if (!navigator.onLine) {
       setSyncStatus('offline');
@@ -526,22 +625,8 @@ export default function App() {
       clearTimeout(autoSaveTimeoutRef.current);
     }
 
-    autoSaveTimeoutRef.current = setTimeout(async () => {
-      try {
-        setSyncStatus('syncing');
-        const boardData = {
-          notes,
-          canvasOffset: offset,
-          canvasScale: scale,
-          version: 1,
-        };
-        await saveBoardToDrive(boardData);
-        const now = Date.now();
-        handleSyncComplete(now);
-        setSyncStatus('synced');
-      } catch (e) {
-        setSyncStatus('error');
-      }
+    autoSaveTimeoutRef.current = setTimeout(() => {
+      performDriveSave();
     }, 8000);
 
     return () => {
@@ -549,24 +634,9 @@ export default function App() {
         clearTimeout(autoSaveTimeoutRef.current);
       }
     };
-  }, [notes, autoSaveDrive, offset, scale]);
+  }, [notes, autoSaveDrive, performDriveSave]);
 
   const canvasRef = useRef<HTMLDivElement>(null);
-
-  // Toast notifications state
-  const [toasts, setToasts] = useState<ToastMessage[]>([]);
-
-  const addToast = useCallback((type: 'info' | 'error' | 'warning' | 'success', message: string, title?: string) => {
-    const id = 'toast_' + Date.now() + '_' + Math.random().toString(36).substring(2, 5);
-    setToasts((prev) => [...prev, { id, type, message, title }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 5000);
-  }, []);
-
-  const handleDismissToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  }, []);
 
   // Load initial state from LocalStorage and rehydrate heavy attachments from IndexedDB
   useEffect(() => {
@@ -1002,7 +1072,7 @@ export default function App() {
       y: pos.y,
       width: 300,
       height: 220,
-      content: content.replace(/\n/g, '<br />'),
+      content: convertMarkdownToHtml(content || ''),
       color: 'sage',
       fontFamily: 'sans',
       fontSize: 'base',
@@ -1106,7 +1176,7 @@ export default function App() {
         y: pos.y,
         width: w,
         height: h,
-        content: (content || '').replace(/\n/g, '<br />'),
+        content: convertMarkdownToHtml(content || ''),
         color: color || 'sage',
         fontFamily: 'sans',
         fontSize: 'base',
@@ -2687,53 +2757,6 @@ export default function App() {
         )}
       </div>
 
-      {/* Top Header Floating Status & Sync Bar */}
-      <div className="fixed top-4 right-4 z-40 select-none flex items-center gap-2">
-        <div className="px-3 py-1.5 bg-[#ede5d8]/90 border border-[#c9c9c9] rounded-full flex items-center gap-2 shadow-xl backdrop-blur-md text-stone-700 text-xs font-medium">
-          {!isOnline ? (
-            <div className="flex items-center gap-1.5 text-stone-600">
-              <WifiOff className="w-4 h-4 text-stone-500" />
-              <span className="hidden sm:inline">Офлайн</span>
-            </div>
-          ) : syncStatus === 'syncing' ? (
-            <div className="flex items-center gap-1.5 text-stone-700">
-              <RefreshCw className="w-4 h-4 animate-spin text-stone-600" />
-              <span className="hidden sm:inline">Синхронізація...</span>
-            </div>
-          ) : syncStatus === 'synced' ? (
-            <div className="flex items-center gap-1.5 text-stone-800 font-medium">
-              <CheckCircle2 className="w-4 h-4 text-stone-700" />
-              <span className="hidden sm:inline">Синхронізовано</span>
-              {lastDriveSyncTime && (
-                <span className="text-[10px] text-stone-500 font-mono">
-                  {new Date(lastDriveSyncTime).toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' })}
-                </span>
-              )}
-            </div>
-          ) : syncStatus === 'error' ? (
-            <div className="flex items-center gap-1.5 text-stone-700">
-              <AlertCircle className="w-4 h-4 text-stone-600" />
-              <span className="hidden sm:inline">Помилка sync</span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5 text-stone-600">
-              <Cloud className="w-4 h-4 text-stone-500" />
-              <span className="hidden sm:inline">Drive Sync</span>
-            </div>
-          )}
-
-          <div className="w-[1px] h-3.5 bg-stone-300 mx-0.5" />
-
-          <button
-            onClick={() => setIsDriveModalOpen(true)}
-            title="Налаштування синхронізації з Google Drive"
-            aria-label="Google Drive Sync"
-            className="p-1 rounded-full text-stone-600 hover:text-stone-900 transition-colors"
-          >
-            <Cloud className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
 
       {/* Sleek Floating Dock / Unified Toolbar */}
       <Toolbar

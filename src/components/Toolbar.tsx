@@ -175,7 +175,7 @@ export const Toolbar: React.FC<ToolbarProps> = React.memo(({
           whileHover={{ scale: 1.1 }}
           whileTap={{ scale: 0.92 }}
           title="Виділення та панорамування"
-          className="p-2 rounded-full transition-all text-stone-900 font-bold ring-1 ring-stone-400"
+          className="p-2 rounded-full transition-all text-stone-900 font-bold"
         >
           <MousePointer2 className="w-4 h-4" />
         </motion.button>
@@ -446,7 +446,7 @@ export const Toolbar: React.FC<ToolbarProps> = React.memo(({
         </AnimatePresence>
 
         {/* LAYERS PANEL TOGGLE BUTTON */}
-        <div className="flex items-center gap-1 border-l border-stone-300/60 pl-1.5 ml-0.5">
+        <div className="flex items-center gap-1">
           <motion.button
             data-layers-toggle="true"
             whileHover={{ scale: 1.1 }}
@@ -455,7 +455,7 @@ export const Toolbar: React.FC<ToolbarProps> = React.memo(({
             onClick={() => setShowLayersPanel(!showLayersPanel)}
             className={`p-2 rounded-full transition-all cursor-pointer ${
               showLayersPanel
-                ? 'text-stone-900 font-bold ring-1 ring-stone-400 bg-stone-300/50' 
+                ? 'text-stone-900 font-bold bg-stone-300/50' 
                 : 'text-stone-600 hover:text-stone-900'
             }`}
           >

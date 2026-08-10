@@ -4,8 +4,7 @@ import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 
-dotenv.config({ path: ".env.local" });
-dotenv.config({ path: ".env" });
+dotenv.config({ path: [".env.local", ".env"] });
 
 const app = express();
 const PORT = 3000;
@@ -491,6 +490,7 @@ app.get("/api/health", (_req, res) => {
     timestamp: Date.now(),
     aiConfigured: hasGeminiKey || hasDeepSeekKey,
     hasGeminiKey,
+    geminiKeyConfigured: hasGeminiKey,
     hasDeepSeekKey,
     hasSearchApi: hasTavilyKey || hasSerperKey,
     hasTavilyKey,

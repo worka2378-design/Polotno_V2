@@ -6,6 +6,8 @@ export interface ToastMessage {
   type: 'info' | 'error' | 'warning' | 'success';
   title?: string;
   message: string;
+  actionLabel?: string;
+  onAction?: () => void;
 }
 
 interface ToastContainerProps {
@@ -46,6 +48,17 @@ export const ToastContainer: React.FC<ToastContainerProps> = ({ toasts, onDismis
               <div className="text-xs text-stone-700 leading-relaxed break-words">
                 {toast.message}
               </div>
+              {toast.actionLabel && toast.onAction && (
+                <button
+                  onClick={() => {
+                    toast.onAction?.();
+                    onDismiss(toast.id);
+                  }}
+                  className="mt-1.5 px-3 py-1 text-xs font-medium bg-stone-900 text-white rounded-full hover:bg-stone-800 transition-colors cursor-pointer"
+                >
+                  {toast.actionLabel}
+                </button>
+              )}
             </div>
             <button
               onClick={() => onDismiss(toast.id)}

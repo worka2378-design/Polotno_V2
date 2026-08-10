@@ -236,6 +236,64 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
   const [ollamaStatus, setOllamaStatus] = useState<'idle' | 'checking' | 'online' | 'offline'>('idle');
   const [isAiSettingsOpen, setIsAiSettingsOpen] = useState(false);
 
+  const [keyTestState, setKeyTestState] = useState<{
+    testing: boolean;
+    status: 'idle' | 'success' | 'error';
+    message: string;
+  }>({ testing: false, status: 'idle', message: '' });
+
+  const handleTestKey = async (providerToTest: 'gemini' | 'deepseek') => {
+    const keyToTest = providerToTest === 'gemini' ? geminiApiKey : deepseekApiKey;
+    if (!keyToTest.trim() && !(providerToTest === 'gemini' ? serverAiStatus.hasGeminiKey : serverAiStatus.hasDeepSeekKey)) {
+      setKeyTestState({
+        testing: false,
+        status: 'error',
+        message: 'Ключ недійсний: Ключ не вказано.',
+      });
+      return;
+    }
+
+    setKeyTestState({ testing: true, status: 'idle', message: 'Перевірка ключа...' });
+
+    try {
+      const res = await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [{ role: 'user', content: 'Перевірка ключа' }],
+          provider: providerToTest,
+          geminiApiKey: providerToTest === 'gemini' ? keyToTest.trim() : undefined,
+          geminiModel,
+          deepseekApiKey: providerToTest === 'deepseek' ? keyToTest.trim() : undefined,
+          deepseekModel,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && !data.error) {
+        setKeyTestState({
+          testing: false,
+          status: 'success',
+          message: 'Ключ дійсний',
+        });
+      } else {
+        const reason = data.response || data.message || 'Помилка авторизації ключа';
+        setKeyTestState({
+          testing: false,
+          status: 'error',
+          message: `Ключ недійсний: ${reason}`,
+        });
+      }
+    } catch (err: any) {
+      setKeyTestState({
+        testing: false,
+        status: 'error',
+        message: `Ключ недійсний: ${err?.message || 'Помилка мережі'}`,
+      });
+    }
+  };
+
   const [serverAiStatus, setServerAiStatus] = useState<{
     checked: boolean;
     configured: boolean;
@@ -1362,7 +1420,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
               </button>
 
               {folders.length > 0 && (
-                <div className="pt-1 pb-1 border-t border-stone-300/50 my-0.5">
+                <div className="pt-1 pb-1 my-0.5">
                   {layer.item.folderId && (
                     <button
                       onClick={(e) => {
@@ -1641,7 +1699,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
               )}
 
               {/* Tag management */}
-              <div className="border-t border-stone-300/50 pt-1.5 mt-0.5 flex flex-col gap-1">
+              <div className="pt-1.5 mt-0.5 flex flex-col gap-1">
                 {link.tags.length > 0 && (
                   <div className="flex flex-wrap gap-1 px-1">
                     {link.tags.map((t) => (
@@ -1800,7 +1858,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
               )}
 
               {/* Tag management */}
-              <div className="border-t border-stone-300/50 pt-1.5 mt-0.5 flex flex-col gap-1">
+              <div className="pt-1.5 mt-0.5 flex flex-col gap-1">
                 {file.tags.length > 0 && (
                   <div className="flex flex-wrap gap-1 px-1">
                     {file.tags.map((t) => (
@@ -1848,7 +1906,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
       style={{ height: panelHeight }}
     >
       {/* Top Header Bar with Tabs: Шари vs Посилання vs Файли vs Пошук */}
-      <div className="px-3 pt-2.5 pb-2 flex items-center justify-between border-b border-stone-300/50 select-none shrink-0">
+      <div className="px-3 pt-2.5 pb-2 flex items-center justify-between select-none shrink-0">
         <div className="flex items-center gap-1 bg-[#e2d8c7]/80 p-1 rounded-full border border-stone-300/60">
           <button
             onClick={() => handleSelectTab('layers')}
@@ -2439,67 +2497,57 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
           {(() => {
             const q = searchQuery.trim().toLowerCase();
             
-            // Collect all unique tags
+            // Collect all unique tags from notes, folders, links, files and content hashtags (#tag)
             const allTags = Array.from(
               new Set([
                 ...notes.flatMap((n) => n.tags || []),
+                ...folders.flatMap((f) => f.tags || []),
                 ...unifiedLinks.flatMap((l) => l.tags || []),
                 ...unifiedFiles.flatMap((f) => f.tags || []),
+                ...notes.flatMap((n) => {
+                  const plainText = (n.content || '').replace(/<[^>]*>/g, '');
+                  const matches = plainText.match(/#([\w\u0400-\u04FF]+)/g);
+                  return matches ? matches.map((m) => m.slice(1)) : [];
+                }),
               ])
-            );
+            ).filter((t) => t && t.trim().length > 0);
 
-            if (!q) {
-              return (
-                <div className="p-3 text-center text-stone-600 text-xs space-y-3">
-                  <div className="p-2.5 rounded-2xl bg-[#e2d8c7]/60 border border-stone-300/60 text-left space-y-1">
-                    <p className="font-semibold text-stone-900 flex items-center gap-1.5">
-                      <Search className="w-3.5 h-3.5 text-stone-600" />
-                      <span>Пошук по всьому канвасу</span>
-                    </p>
-                    <p className="text-[11px] text-stone-600 leading-relaxed">
-                      Введіть текст, назву, посилання або #тег у полі нижче для миттєвого пошуку по нотатках, папках та вкладеннях.
-                    </p>
-                  </div>
-
-                  {allTags.length > 0 && (
-                    <div className="text-left space-y-1.5 pt-1">
-                      <p className="text-[11px] font-medium text-stone-700 flex items-center gap-1">
-                        <Tag className="w-3 h-3" />
-                        <span>Доступні теги:</span>
-                      </p>
-                      <div className="flex flex-wrap gap-1">
-                        {allTags.map((tag) => (
-                          <button
-                            key={tag}
-                            onClick={() => setSearchQuery(`#${tag}`)}
-                            className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-[#e2d8c7] hover:bg-stone-300 text-stone-800 transition-colors cursor-pointer border border-stone-300/80"
-                          >
-                            #{tag}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            }
+            const isTagSearch = q.startsWith('#');
+            const cleanTagQuery = isTagSearch ? q.slice(1).trim().toLowerCase() : q;
 
             // Search Filtered Results
             const searchNotes = notes.filter((n) => {
-              const tagsStr = (n.tags || []).map((t) => `#${t}`).join(' ');
-              const title = n.title || '';
-              const content = (n.content || '').replace(/<[^>]*>/g, '');
+              const explicitTags = (n.tags || []).map((t) => t.toLowerCase());
+              const contentTags = ((n.content || '').replace(/<[^>]*>/g, '').match(/#([\w\u0400-\u04FF]+)/g) || []).map((m) => m.slice(1).toLowerCase());
+              const allNoteTags = [...explicitTags, ...contentTags];
+              const tagsStr = allNoteTags.map((t) => `#${t}`).join(' ');
+              
+              const title = (n.title || '').toLowerCase();
+              const content = (n.content || '').replace(/<[^>]*>/g, '').toLowerCase();
+
+              if (isTagSearch) {
+                return allNoteTags.some((t) => t.includes(cleanTagQuery)) || tagsStr.includes(q);
+              }
               return (
-                title.toLowerCase().includes(q) ||
-                content.toLowerCase().includes(q) ||
-                tagsStr.toLowerCase().includes(q)
+                title.includes(q) ||
+                content.includes(q) ||
+                tagsStr.includes(q)
               );
             });
 
-            const searchFolders = folders.filter((f) => f.name.toLowerCase().includes(q));
+            const searchFolders = folders.filter((f) => {
+              const tagsStr = (f.tags || []).map((t) => `#${t}`).join(' ');
+              if (isTagSearch) {
+                return (f.tags || []).some((t) => t.toLowerCase().includes(cleanTagQuery));
+              }
+              return f.name.toLowerCase().includes(q) || tagsStr.toLowerCase().includes(q);
+            });
 
             const searchLinks = unifiedLinks.filter((l) => {
               const tagsStr = (l.tags || []).map((t) => `#${t}`).join(' ');
+              if (isTagSearch) {
+                return (l.tags || []).some((t) => t.toLowerCase().includes(cleanTagQuery));
+              }
               return (
                 (l.title || '').toLowerCase().includes(q) ||
                 (l.url || '').toLowerCase().includes(q) ||
@@ -2511,6 +2559,9 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
 
             const searchFiles = unifiedFiles.filter((f) => {
               const tagsStr = (f.tags || []).map((t) => `#${t}`).join(' ');
+              if (isTagSearch) {
+                return (f.tags || []).some((t) => t.toLowerCase().includes(cleanTagQuery));
+              }
               return (
                 (f.name || '').toLowerCase().includes(q) ||
                 (f.type || '').toLowerCase().includes(q) ||
@@ -2522,16 +2573,64 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
             const totalMatches =
               searchNotes.length + searchFolders.length + searchLinks.length + searchFiles.length;
 
-            if (totalMatches === 0) {
-              return (
-                <div className="p-6 text-center text-stone-500 text-xs italic">
-                  Нічого не знайдено за запитом „{searchQuery}”
-                </div>
-              );
-            }
-
             return (
               <div className="space-y-3">
+                {/* Always show available tags immediately at top of search view */}
+                {allTags.length > 0 && (
+                  <div className="p-2.5 rounded-2xl bg-[#e2d8c7]/80 text-left space-y-1.5 border border-stone-300/60">
+                    <div className="flex items-center justify-between text-[11px] font-semibold text-stone-800">
+                      <span className="flex items-center gap-1">
+                        <Tag className="w-3.5 h-3.5 text-stone-600" />
+                        <span>Доступні теги ({allTags.length}):</span>
+                      </span>
+                      {q && (
+                        <button
+                          onClick={() => setSearchQuery('')}
+                          className="text-[10px] text-stone-600 hover:text-stone-900 underline transition-colors cursor-pointer"
+                        >
+                          Скинути
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-1 max-h-28 overflow-y-auto scrollbar-none">
+                      {allTags.map((tag) => {
+                        const isSelected = searchQuery.toLowerCase().includes(`#${tag.toLowerCase()}`);
+                        return (
+                          <button
+                            key={tag}
+                            onClick={() => setSearchQuery(isSelected ? '' : `#${tag}`)}
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono transition-all cursor-pointer ${
+                              isSelected
+                                ? 'bg-stone-900 text-white font-bold'
+                                : 'bg-[#efe9dd] hover:bg-stone-300 text-stone-800 border border-stone-300/80'
+                            }`}
+                          >
+                            #{tag}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {!q ? (
+                  <div className="p-3 text-center text-stone-600 text-xs space-y-2">
+                    <div className="p-2.5 rounded-2xl bg-[#e2d8c7]/60 border border-stone-300/60 text-left space-y-1">
+                      <p className="font-semibold text-stone-900 flex items-center gap-1.5">
+                        <Search className="w-3.5 h-3.5 text-stone-600" />
+                        <span>Пошук по всьому канвасу</span>
+                      </p>
+                      <p className="text-[11px] text-stone-600 leading-relaxed">
+                        Введіть текст, назву або оберіть тег вище для миттєвого пошуку по нотатках, папках та вкладеннях.
+                      </p>
+                    </div>
+                  </div>
+                ) : totalMatches === 0 ? (
+                  <div className="p-6 text-center text-stone-500 text-xs italic">
+                    Нічого не знайдено за запитом „{searchQuery}”
+                  </div>
+                ) : (
+                  <>
                 {/* Notes */}
                 {searchNotes.length > 0 && (
                   <div className="space-y-1">
@@ -2663,6 +2762,8 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
                     </div>
                   </div>
                 )}
+                  </>
+                )}
               </div>
             );
           })()}
@@ -2757,16 +2858,48 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
                       </select>
                     </div>
 
-                    <div className="relative">
-                      <input
-                        type="password"
-                        value={geminiApiKey}
-                        onChange={(e) => setGeminiApiKey(e.target.value)}
-                        placeholder="Введіть API Ключ"
-                        className="w-full bg-[#e2d8c7] text-stone-900 text-xs px-3 py-1.5 rounded-full border border-stone-300 outline-none placeholder:text-stone-400 pl-8 font-mono"
-                      />
-                      <Key className="w-3.5 h-3.5 text-stone-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <div className="flex items-center gap-1.5">
+                      <div className="relative flex-1">
+                        <input
+                          type="password"
+                          value={geminiApiKey}
+                          onChange={(e) => {
+                            setGeminiApiKey(e.target.value);
+                            setKeyTestState({ testing: false, status: 'idle', message: '' });
+                          }}
+                          placeholder="Введіть API Ключ"
+                          className="w-full bg-[#e2d8c7] text-stone-900 text-xs px-3 py-1.5 rounded-full border border-stone-300 outline-none placeholder:text-stone-400 pl-8 font-mono"
+                        />
+                        <Key className="w-3.5 h-3.5 text-stone-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                      </div>
+                      <button
+                        onClick={() => handleTestKey('gemini')}
+                        disabled={keyTestState.testing}
+                        className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-full bg-stone-900 text-white font-medium hover:bg-stone-800 transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+                      >
+                        {keyTestState.testing ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="w-3.5 h-3.5" />
+                        )}
+                        <span>Тест</span>
+                      </button>
                     </div>
+
+                    {keyTestState.status !== 'idle' && (
+                      <div className={`text-[11px] font-medium px-3 py-1.5 rounded-full border flex items-center gap-1.5 ${
+                        keyTestState.status === 'success'
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                          : 'bg-rose-50 border-rose-200 text-rose-800'
+                      }`}>
+                        {keyTestState.status === 'success' ? (
+                          <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        ) : (
+                          <X className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                        )}
+                        <span className="truncate">{keyTestState.message}</span>
+                      </div>
+                    )}
                   </>
                 )}
 
@@ -2795,16 +2928,48 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
                       </select>
                     </div>
 
-                    <div className="relative">
-                      <input
-                        type="password"
-                        value={deepseekApiKey}
-                        onChange={(e) => setDeepseekApiKey(e.target.value)}
-                        placeholder="Введіть API Ключ"
-                        className="w-full bg-[#e2d8c7] text-stone-900 text-xs px-3 py-1.5 rounded-full border border-stone-300 outline-none placeholder:text-stone-400 pl-8 font-mono"
-                      />
-                      <Key className="w-3.5 h-3.5 text-stone-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <div className="flex items-center gap-1.5">
+                      <div className="relative flex-1">
+                        <input
+                          type="password"
+                          value={deepseekApiKey}
+                          onChange={(e) => {
+                            setDeepseekApiKey(e.target.value);
+                            setKeyTestState({ testing: false, status: 'idle', message: '' });
+                          }}
+                          placeholder="Введіть API Ключ"
+                          className="w-full bg-[#e2d8c7] text-stone-900 text-xs px-3 py-1.5 rounded-full border border-stone-300 outline-none placeholder:text-stone-400 pl-8 font-mono"
+                        />
+                        <Key className="w-3.5 h-3.5 text-stone-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                      </div>
+                      <button
+                        onClick={() => handleTestKey('deepseek')}
+                        disabled={keyTestState.testing}
+                        className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-full bg-stone-900 text-white font-medium hover:bg-stone-800 transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+                      >
+                        {keyTestState.testing ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="w-3.5 h-3.5" />
+                        )}
+                        <span>Тест</span>
+                      </button>
                     </div>
+
+                    {keyTestState.status !== 'idle' && (
+                      <div className={`text-[11px] font-medium px-3 py-1.5 rounded-full border flex items-center gap-1.5 ${
+                        keyTestState.status === 'success'
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                          : 'bg-rose-50 border-rose-200 text-rose-800'
+                      }`}>
+                        {keyTestState.status === 'success' ? (
+                          <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        ) : (
+                          <X className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                        )}
+                        <span className="truncate">{keyTestState.message}</span>
+                      </div>
+                    )}
                   </>
                 )}
 
@@ -2981,10 +3146,10 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
                     <div
                       className={`max-w-[96%] text-xs leading-relaxed select-text ${
                         msg.role === 'user'
-                          ? 'bg-stone-900 text-stone-100 px-3.5 py-2 rounded-2xl rounded-tr-none shadow-2xs'
+                          ? 'border border-stone-300/80 text-stone-900 px-3.5 py-2 rounded-2xl rounded-tr-none'
                           : msg.isError
-                          ? 'bg-amber-100 text-amber-950 border border-amber-300 px-3 py-2 rounded-2xl rounded-tl-none shadow-2xs'
-                          : 'bg-[#efe9dd]/90 border border-stone-300/80 text-stone-900 px-3.5 py-2.5 rounded-2xl rounded-tl-none shadow-2xs'
+                          ? 'border border-stone-300/80 text-amber-950 px-3 py-2 rounded-2xl rounded-tl-none'
+                          : 'border border-stone-300/80 text-stone-900 px-3.5 py-2.5 rounded-2xl rounded-tl-none'
                       }`}
                     >
                       {msg.isError ? (
@@ -3034,7 +3199,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
                                 </li>
                               ),
                               blockquote: ({ children }) => (
-                                <blockquote className="border-l-2 border-stone-500 pl-2.5 my-1.5 italic text-stone-800 bg-stone-200/60 py-1 rounded-r-lg text-xs select-text">
+                                <blockquote className="border-l-2 border-stone-500 pl-2.5 my-1.5 italic text-stone-800 py-0.5 text-xs select-text">
                                   {children}
                                 </blockquote>
                               ),
@@ -3053,7 +3218,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
                                   href={href}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-blue-800 underline font-medium hover:text-blue-950 inline-flex items-center gap-0.5 break-all select-text"
+                                  className="text-stone-900 underline font-medium hover:text-stone-950 inline-flex items-center gap-0.5 break-all select-text"
                                 >
                                   <span>{children}</span>
                                   <ExternalLink className="w-3 h-3 inline shrink-0" />
@@ -3067,13 +3232,13 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
 
                                 if (isCodeBlock) {
                                   return (
-                                    <div className="my-2 bg-stone-900 text-stone-100 rounded-xl p-2.5 font-mono text-[11px] border border-stone-700/80 shadow-inner relative group select-text">
-                                      <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-stone-800 text-[10px] text-stone-400 font-mono select-none">
+                                    <div className="my-2 text-stone-900 rounded-xl p-2.5 font-mono text-[11px] border border-stone-400/70 relative group select-text">
+                                      <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-stone-300 text-[10px] text-stone-600 font-mono select-none">
                                         <span>{langName}</span>
                                         <div className="flex items-center gap-2">
                                           <button
                                             onClick={() => navigator.clipboard.writeText(codeStr)}
-                                            className="hover:text-white transition-colors cursor-pointer flex items-center gap-1"
+                                            className="hover:text-stone-950 transition-colors cursor-pointer flex items-center gap-1"
                                             title="Скопіювати код"
                                           >
                                             <Copy className="w-3 h-3" />
@@ -3082,7 +3247,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
                                           {onCreateNoteFromAI && (
                                             <button
                                               onClick={() => onCreateNoteFromAI(`Код (${langName})`, `\`\`\`${langName}\n${codeStr}\n\`\`\``)}
-                                              className="hover:text-white transition-colors cursor-pointer flex items-center gap-1 text-emerald-400"
+                                              className="hover:text-stone-950 transition-colors cursor-pointer flex items-center gap-1 font-semibold"
                                               title="Зберегти код як нотатку"
                                             >
                                               <Plus className="w-3 h-3" />
@@ -3091,7 +3256,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
                                           )}
                                         </div>
                                       </div>
-                                      <pre className="whitespace-pre-wrap break-words overflow-x-auto leading-relaxed text-stone-200 select-text">
+                                      <pre className="whitespace-pre-wrap break-words overflow-x-auto leading-relaxed text-stone-900 select-text">
                                         {codeStr}
                                       </pre>
                                     </div>
@@ -3099,7 +3264,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
                                 }
                                 return (
                                   <code
-                                    className="bg-stone-300/80 text-stone-950 px-1.5 py-0.5 rounded font-mono text-[11px] border border-stone-400/60 select-text"
+                                    className="border border-stone-400/60 text-stone-950 px-1 py-0.5 rounded font-mono text-[11px] select-text"
                                     {...props}
                                   >
                                     {children}
@@ -3115,7 +3280,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
 
                       {/* Action Note suggestion from AI */}
                       {msg.actionNote && !msg.isError && (
-                        <div className="mt-2 pt-2 border-t border-stone-300/60 flex flex-col gap-1">
+                        <div className="mt-2 pt-2 flex flex-col gap-1">
                           <div className="text-[10px] font-semibold text-stone-600">
                             Запропоновано створити нотатку:
                           </div>
@@ -3138,10 +3303,10 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
 
                       {/* Message Action Bar: Copy full message & Save as note */}
                       {msg.role === 'assistant' && !msg.isError && (
-                        <div className="mt-2 pt-1.5 border-t border-stone-300/50 flex items-center justify-between text-[10px] text-stone-600 select-none">
+                        <div className="mt-2 pt-1.5 flex items-center justify-between text-[10px] text-stone-600 select-none">
                           <button
                             onClick={() => handleCopyMessage(msg.id, msg.content)}
-                            className="hover:text-stone-950 hover:bg-stone-300/50 px-2 py-0.5 rounded-full flex items-center gap-1 transition-colors cursor-pointer"
+                            className="hover:text-stone-950 px-2 py-0.5 rounded-full flex items-center gap-1 transition-colors cursor-pointer"
                             title="Скопіювати всю відповідь"
                           >
                             {copiedMessageId === msg.id ? (
@@ -3166,7 +3331,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
                                   onCreateNoteFromAI(title, msg.content);
                                 }
                               }}
-                              className="hover:text-stone-950 hover:bg-stone-300/50 px-2 py-0.5 rounded-full flex items-center gap-1 transition-colors cursor-pointer"
+                              className="hover:text-stone-950 px-2 py-0.5 rounded-full flex items-center gap-1 transition-colors cursor-pointer"
                               title="Зберегти як нотатку на полотні"
                             >
                               <Plus className="w-3 h-3" />
@@ -3202,7 +3367,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
                   e.preventDefault();
                   handleSendAiMessage();
                 }}
-                className="flex items-center gap-1.5 pt-2 border-t border-stone-300/50 shrink-0"
+                className="flex items-center gap-1.5 pt-2 shrink-0"
               >
                 <input
                   type="text"
@@ -3242,7 +3407,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
 
       {/* Search & Action Footer - Single Row (Hidden in AI mode) */}
       {currentTab !== 'ai' && (
-        <div className="px-3 pb-3 pt-2 shrink-0 border-t border-stone-300/50 flex items-center gap-2">
+        <div className="px-3 pb-3 pt-2 shrink-0 flex items-center gap-2">
           <div className="relative flex-1 flex items-center bg-[#e2d8c7] border border-stone-300 rounded-full px-3.5 py-1.5">
             <Search className="w-4 h-4 text-stone-500 pointer-events-none shrink-0" />
             <input 

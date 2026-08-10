@@ -215,8 +215,6 @@ export const Minimap: React.FC<MinimapProps> = ({
           <Map className="w-4 h-4" />
         </motion.button>
 
-        <div className="w-[1px] h-4 bg-stone-300/80 mx-0.5" />
-
         <motion.button
           whileHover={{ scale: 1.1 }}
           whileTap={{ scale: 0.92 }}
@@ -240,8 +238,6 @@ export const Minimap: React.FC<MinimapProps> = ({
         >
           <ZoomIn className="w-4 h-4" />
         </motion.button>
-
-        <div className="w-[1px] h-4 bg-stone-300/80 mx-0.5" />
 
         <motion.button
           whileHover={{ scale: 1.1 }}
