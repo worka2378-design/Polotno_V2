@@ -66,6 +66,8 @@ interface GoogleDriveModalProps {
   onOpenVaultModal?: () => void;
   onOpenExportModal?: () => void;
   onOpenImportModal?: () => void;
+  onOpenPcSyncModal?: () => void;
+  pcFolderName?: string | null;
   initialTab?: 'backup' | 'files' | 'calendar';
 }
 
@@ -85,6 +87,8 @@ export const GoogleDriveModal: React.FC<GoogleDriveModalProps> = ({
   onOpenVaultModal,
   onOpenExportModal,
   onOpenImportModal,
+  onOpenPcSyncModal,
+  pcFolderName,
   initialTab = 'backup',
 }) => {
   const [activeTab, setActiveTab] = useState<'backup' | 'files' | 'calendar'>(initialTab);
@@ -579,6 +583,28 @@ export const GoogleDriveModal: React.FC<GoogleDriveModalProps> = ({
                       <span className="text-sm font-medium text-stone-700 group-hover/opt:text-stone-900 transition-colors">
                         Імпорт бекапу (.json)
                       </span>
+                    </div>
+                  </button>
+                )}
+
+                {onOpenPcSyncModal && (
+                  <button
+                    onClick={() => {
+                      onClose();
+                      onOpenPcSyncModal();
+                    }}
+                    className="flex items-center gap-3 px-3 py-2.5 text-left transition-colors group/opt w-full cursor-pointer rounded-full"
+                  >
+                    <HardDrive className="w-4 h-4 text-stone-600 group-hover/opt:text-stone-900 transition-colors shrink-0" />
+                    <div className="flex-1 min-w-0 flex items-center justify-between gap-1">
+                      <span className="text-sm font-medium text-stone-700 group-hover/opt:text-stone-900 transition-colors">
+                        Локальна папка ПК (Авто-збереження)
+                      </span>
+                      {pcFolderName && (
+                        <span className="text-xs text-stone-500 font-medium truncate max-w-[120px]">
+                          {pcFolderName}
+                        </span>
+                      )}
                     </div>
                   </button>
                 )}

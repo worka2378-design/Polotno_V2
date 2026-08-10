@@ -1,5 +1,5 @@
 import React from 'react';
-import { Download, FileCode, Shield, FileText, X, Upload } from 'lucide-react';
+import { Download, FileCode, Shield, FileText, X, Upload, HardDrive } from 'lucide-react';
 
 interface ExportModalProps {
   isOpen: boolean;
@@ -9,6 +9,9 @@ interface ExportModalProps {
   onExportPlainJSON: () => void;
   onExportTXT: () => void;
   onOpenImportModal?: () => void;
+  onOpenPcSyncModal?: () => void;
+  pcFolderName?: string | null;
+  pcSyncStatus?: 'idle' | 'syncing' | 'synced' | 'need_permission' | 'error';
 }
 
 export const ExportModal: React.FC<ExportModalProps> = ({
@@ -19,6 +22,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   onExportPlainJSON,
   onExportTXT,
   onOpenImportModal,
+  onOpenPcSyncModal,
+  pcFolderName,
+  pcSyncStatus = 'idle',
 }) => {
   if (!isOpen) return null;
 
@@ -112,7 +118,42 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             </div>
           </button>
 
-          {/* Option 5: Import Backup */}
+          {/* Option 5: PC Folder Local Sync */}
+          {onOpenPcSyncModal && (
+            <div className="pt-2 mt-2 border-t border-stone-300">
+              <button
+                onClick={() => {
+                  onClose();
+                  onOpenPcSyncModal();
+                }}
+                className="flex items-start gap-3 px-3 py-2 text-left transition-colors group/opt w-full cursor-pointer rounded-full bg-stone-900/5 hover:bg-stone-900/10"
+              >
+                <HardDrive className="w-4 h-4 text-stone-900 shrink-0 mt-0.5 transition-colors" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-sm font-semibold text-stone-900 transition-colors">
+                      Авто-синхронізація з ПК
+                    </span>
+                    {pcFolderName && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold rounded-full bg-stone-900 text-white shrink-0">
+                        <span className={`w-1.5 h-1.5 rounded-full ${
+                          pcSyncStatus === 'synced' ? 'bg-emerald-400' : pcSyncStatus === 'syncing' ? 'bg-amber-400' : 'bg-rose-400'
+                        }`} />
+                        <span className="truncate max-w-[90px]">{pcFolderName}</span>
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-stone-600 mt-0.5 transition-colors">
+                    {pcFolderName
+                      ? `Підключено папку ПК: "${pcFolderName}". Натисніть для налаштувань.`
+                      : 'Прив’язати папку вашого ПК для автоматичного збереження.'}
+                  </p>
+                </div>
+              </button>
+            </div>
+          )}
+
+          {/* Option 6: Import Backup */}
           {onOpenImportModal && (
             <div className="pt-2 mt-2 border-t border-stone-300">
               <button

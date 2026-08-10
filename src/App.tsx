@@ -22,8 +22,18 @@ import { AnimatePresence } from 'motion/react';
 
 import { FrameCard } from './components/FrameCard';
 import { TemplatePickerModal } from './components/TemplatePickerModal';
+import { PcSyncModal } from './components/PcSyncModal';
 import { NoteTemplate } from './utils/templates';
-import { Cloud, WifiOff, RefreshCw, CheckCircle2, AlertCircle, Sparkles, LayoutTemplate } from 'lucide-react';
+import { Cloud, WifiOff, RefreshCw, CheckCircle2, AlertCircle, Sparkles, LayoutTemplate, HardDrive } from 'lucide-react';
+import {
+  selectLocalFolder,
+  saveBoardToLocalFolder,
+  loadBoardFromLocalFolder,
+  getDirectoryHandle,
+  clearDirectoryHandle,
+  verifyFolderPermission,
+  getLocalFolderLastModified,
+} from './utils/localSync';
 
 const STORAGE_KEY = 'infinite_notepad_vault_v1';
 
@@ -350,6 +360,14 @@ export default function App() {
   }, []);
   const [masterPassword, setMasterPassword] = useState<string | null>(null);
 
+  // Local PC Folder Sync State
+  const [pcFolderHandle, setPcFolderHandle] = useState<FileSystemDirectoryHandle | null>(null);
+  const [pcFolderName, setPcFolderName] = useState<string | null>(null);
+  const [pcSyncStatus, setPcSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'need_permission' | 'error'>('idle');
+  const [pcLastSyncTime, setPcLastSyncTime] = useState<number | null>(null);
+  const [pcErrorMessage, setPcErrorMessage] = useState<string | undefined>(undefined);
+  const [isPcSyncModalOpen, setIsPcSyncModalOpen] = useState<boolean>(false);
+
   // Google Drive & Network Integration State
   const [isTemplatePickerOpen, setIsTemplatePickerOpen] = useState<boolean>(false);
   const [isOnline, setIsOnline] = useState<boolean>(() => typeof navigator !== 'undefined' ? navigator.onLine : true);
@@ -501,6 +519,203 @@ export default function App() {
   const handleDismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
+
+  // Initialize Local PC Sync Folder handle from IndexedDB on startup
+  useEffect(() => {
+    async function initPcFolderSync() {
+      try {
+        const handle = await getDirectoryHandle();
+        if (handle) {
+          setPcFolderHandle(handle);
+          setPcFolderName(handle.name);
+
+          const hasPerm = await verifyFolderPermission(handle, false);
+          if (hasPerm) {
+            setPcSyncStatus('synced');
+            try {
+              const loadedData = await loadBoardFromLocalFolder(handle);
+              if (loadedData && Array.isArray(loadedData.notes)) {
+                if (loadedData.notes.length > 0) setNotes(loadedData.notes);
+                if (Array.isArray(loadedData.folders)) setFolders(loadedData.folders);
+                if (Array.isArray(loadedData.standaloneLinks)) setStandaloneLinks(loadedData.standaloneLinks);
+                if (Array.isArray(loadedData.linkFolders)) setLinkFolders(loadedData.linkFolders);
+                if (loadedData.linkMetadata) setLinkMetadata(loadedData.linkMetadata);
+                if (Array.isArray(loadedData.standaloneFiles)) setStandaloneFiles(loadedData.standaloneFiles);
+                if (Array.isArray(loadedData.fileFolders)) setFileFolders(loadedData.fileFolders);
+                if (loadedData.fileMetadata) setFileMetadata(loadedData.fileMetadata);
+                if (loadedData.canvasOffset) setOffset(loadedData.canvasOffset);
+                if (loadedData.canvasScale) setScale(loadedData.canvasScale);
+                if (loadedData.lastSavedAt) setPcLastSyncTime(loadedData.lastSavedAt);
+                addToast('success', `Успішно завантажено дані з ПК папки "${handle.name}"`, 'ПК Локальний Сервер');
+              }
+            } catch (err: any) {
+              console.warn("Auto-load from PC folder failed:", err);
+            }
+          } else {
+            setPcSyncStatus('need_permission');
+            setPcErrorMessage('Потрібно надати дозвіл браузера для автоматичної синхронізації з папкою ПК.');
+          }
+        }
+      } catch (e: any) {
+        console.error("Error initializing PC folder handle:", e);
+      }
+    }
+    initPcFolderSync();
+  }, [addToast]);
+
+  // Auto-Save to Local PC Folder on state changes
+  const pcAutoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isSavingToPcRef = useRef(false);
+
+  const performPcFolderSave = useCallback(async () => {
+    if (!pcFolderHandle) return;
+    if (isSavingToPcRef.current) return;
+
+    try {
+      isSavingToPcRef.current = true;
+      setPcSyncStatus('syncing');
+
+      const payload = {
+        version: 1,
+        notes: notesRef.current,
+        folders: foldersRef.current,
+        standaloneLinks,
+        linkFolders,
+        linkMetadata,
+        standaloneFiles,
+        fileFolders,
+        fileMetadata,
+        canvasOffset: offset,
+        canvasScale: scale,
+        maxZIndex,
+      };
+
+      const saveTime = await saveBoardToLocalFolder(pcFolderHandle, payload);
+      setPcLastSyncTime(saveTime);
+      setPcSyncStatus('synced');
+      setPcErrorMessage(undefined);
+    } catch (err: any) {
+      console.error("Error saving to PC folder:", err);
+      if (err?.name === 'NotAllowedError' || err?.message?.includes('дозвіл')) {
+        setPcSyncStatus('need_permission');
+        setPcErrorMessage('Браузер вимагає підтвердження дозволу для збереження в папку ПК.');
+      } else {
+        setPcSyncStatus('error');
+        setPcErrorMessage(err?.message || 'Помилка запису в папку ПК.');
+      }
+    } finally {
+      isSavingToPcRef.current = false;
+    }
+  }, [pcFolderHandle, standaloneLinks, linkFolders, linkMetadata, standaloneFiles, fileFolders, fileMetadata, offset, scale, maxZIndex]);
+
+  useEffect(() => {
+    if (!pcFolderHandle) return;
+    if (pcSyncStatus === 'need_permission') return;
+
+    if (pcAutoSaveTimeoutRef.current) {
+      clearTimeout(pcAutoSaveTimeoutRef.current);
+    }
+
+    pcAutoSaveTimeoutRef.current = setTimeout(() => {
+      performPcFolderSave();
+    }, 1500);
+
+    return () => {
+      if (pcAutoSaveTimeoutRef.current) {
+        clearTimeout(pcAutoSaveTimeoutRef.current);
+      }
+    };
+  }, [notes, folders, standaloneLinks, linkFolders, linkMetadata, standaloneFiles, fileFolders, fileMetadata, pcFolderHandle, pcSyncStatus, performPcFolderSave]);
+
+  // Periodically check if board_data.json on PC folder was modified
+  useEffect(() => {
+    if (!pcFolderHandle || pcSyncStatus === 'need_permission') return;
+
+    const interval = setInterval(async () => {
+      try {
+        const lastMod = await getLocalFolderLastModified(pcFolderHandle);
+        if (lastMod && pcLastSyncTime && lastMod > pcLastSyncTime + 2000) {
+          const updated = await loadBoardFromLocalFolder(pcFolderHandle);
+          if (updated && Array.isArray(updated.notes)) {
+            setNotes(updated.notes);
+            if (Array.isArray(updated.folders)) setFolders(updated.folders);
+            if (Array.isArray(updated.standaloneLinks)) setStandaloneLinks(updated.standaloneLinks);
+            if (Array.isArray(updated.linkFolders)) setLinkFolders(updated.linkFolders);
+            if (updated.linkMetadata) setLinkMetadata(updated.linkMetadata);
+            if (Array.isArray(updated.standaloneFiles)) setStandaloneFiles(updated.standaloneFiles);
+            if (Array.isArray(updated.fileFolders)) setFileFolders(updated.fileFolders);
+            if (updated.fileMetadata) setFileMetadata(updated.fileMetadata);
+            setPcLastSyncTime(lastMod);
+            addToast('info', 'Автоматично підтягнуто нові зміни з ПК папки', 'ПК Сервер');
+          }
+        }
+      } catch (e) {
+        console.warn("Polling PC folder lastModified failed:", e);
+      }
+    }, 6000);
+
+    return () => clearInterval(interval);
+  }, [pcFolderHandle, pcSyncStatus, pcLastSyncTime, addToast]);
+
+  const handleSelectPcFolder = async () => {
+    try {
+      const res = await selectLocalFolder();
+      if (res) {
+        setPcFolderHandle(res.handle);
+        setPcFolderName(res.folderName);
+        setPcSyncStatus('synced');
+        setPcErrorMessage(undefined);
+        addToast('success', `Підключено папку "${res.folderName}" як локальний сервер`, 'ПК Сервер');
+
+        const existingData = await loadBoardFromLocalFolder(res.handle);
+        if (existingData && Array.isArray(existingData.notes) && existingData.notes.length > 0) {
+          setNotes(existingData.notes);
+          if (Array.isArray(existingData.folders)) setFolders(existingData.folders);
+          if (Array.isArray(existingData.standaloneLinks)) setStandaloneLinks(existingData.standaloneLinks);
+          if (Array.isArray(existingData.linkFolders)) setLinkFolders(existingData.linkFolders);
+          if (existingData.linkMetadata) setLinkMetadata(existingData.linkMetadata);
+          if (Array.isArray(existingData.standaloneFiles)) setStandaloneFiles(existingData.standaloneFiles);
+          if (Array.isArray(existingData.fileFolders)) setFileFolders(existingData.fileFolders);
+          if (existingData.fileMetadata) setFileMetadata(existingData.fileMetadata);
+          if (existingData.canvasOffset) setOffset(existingData.canvasOffset);
+          if (existingData.canvasScale) setScale(existingData.canvasScale);
+          addToast('info', 'Завантажено дані з вибраної ПК папки', 'ПК Сервер');
+        } else {
+          performPcFolderSave();
+        }
+      }
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        addToast('error', err?.message || 'Не вдалося вибрати папку на ПК');
+      }
+    }
+  };
+
+  const handleRequestPcPermission = async () => {
+    if (!pcFolderHandle) return;
+    try {
+      const granted = await verifyFolderPermission(pcFolderHandle, true);
+      if (granted) {
+        setPcSyncStatus('synced');
+        setPcErrorMessage(undefined);
+        addToast('success', 'Дозвіл надано. Синхронізація з ПК активна.', 'ПК Сервер');
+        performPcFolderSave();
+      } else {
+        setPcSyncStatus('need_permission');
+      }
+    } catch (err: any) {
+      addToast('error', 'Не вдалося отримати дозвіл на папку ПК');
+    }
+  };
+
+  const handleDisconnectPcFolder = async () => {
+    await clearDirectoryHandle();
+    setPcFolderHandle(null);
+    setPcFolderName(null);
+    setPcSyncStatus('idle');
+    setPcErrorMessage(undefined);
+    addToast('info', 'Папку ПК відключено', 'ПК Сервер');
+  };
 
   // Monitor Google Auth state to handle signed out status & notify on startup
   useEffect(() => {
@@ -2757,7 +2972,6 @@ export default function App() {
         )}
       </div>
 
-
       {/* Sleek Floating Dock / Unified Toolbar */}
       <Toolbar
         onAddNote={() => handleAddNote()}
@@ -2851,6 +3065,23 @@ export default function App() {
         onExportPlainJSON={handleExportPlainJSON}
         onExportTXT={handleExportTXT}
         onOpenImportModal={() => setIsImportModalOpen(true)}
+        onOpenPcSyncModal={() => setIsPcSyncModalOpen(true)}
+        pcFolderName={pcFolderName}
+        pcSyncStatus={pcSyncStatus}
+      />
+
+      {/* Local PC Sync Folder Control Modal */}
+      <PcSyncModal
+        isOpen={isPcSyncModalOpen}
+        onClose={() => setIsPcSyncModalOpen(false)}
+        folderName={pcFolderName}
+        syncStatus={pcSyncStatus}
+        lastSyncTime={pcLastSyncTime}
+        errorMessage={pcErrorMessage}
+        onSelectFolder={handleSelectPcFolder}
+        onRequestPermission={handleRequestPcPermission}
+        onSyncNow={() => performPcFolderSave()}
+        onDisconnectFolder={handleDisconnectPcFolder}
       />
 
       {/* Import Backup Modal */}
@@ -2881,6 +3112,8 @@ export default function App() {
         onOpenVaultModal={() => setIsVaultModalOpen(true)}
         onOpenExportModal={() => setIsExportModalOpen(true)}
         onOpenImportModal={() => setIsImportModalOpen(true)}
+        onOpenPcSyncModal={() => setIsPcSyncModalOpen(true)}
+        pcFolderName={pcFolderName}
       />
 
       {/* Note Template Picker Library Modal */}

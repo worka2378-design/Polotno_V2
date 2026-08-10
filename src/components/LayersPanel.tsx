@@ -248,7 +248,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
       setKeyTestState({
         testing: false,
         status: 'error',
-        message: 'Ключ недійсний: Ключ не вказано.',
+        message: 'Ключ не вказано.',
       });
       return;
     }
@@ -256,40 +256,37 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
     setKeyTestState({ testing: true, status: 'idle', message: 'Перевірка ключа...' });
 
     try {
-      const res = await fetch('/api/ai/chat', {
+      const res = await fetch('/api/ai/verify-key', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: [{ role: 'user', content: 'Перевірка ключа' }],
           provider: providerToTest,
-          geminiApiKey: providerToTest === 'gemini' ? keyToTest.trim() : undefined,
-          geminiModel,
-          deepseekApiKey: providerToTest === 'deepseek' ? keyToTest.trim() : undefined,
-          deepseekModel,
+          apiKey: keyToTest.trim() || undefined,
+          model: providerToTest === 'gemini' ? geminiModel : deepseekModel,
         }),
       });
 
       const data = await res.json();
 
-      if (res.ok && !data.error) {
+      if (res.ok && data.ok) {
         setKeyTestState({
           testing: false,
           status: 'success',
-          message: 'Ключ дійсний',
+          message: data.message || 'Ключ дійсний',
         });
       } else {
-        const reason = data.response || data.message || 'Помилка авторизації ключа';
+        const reason = data.message || 'Помилка авторизації ключа';
         setKeyTestState({
           testing: false,
           status: 'error',
-          message: `Ключ недійсний: ${reason}`,
+          message: reason,
         });
       }
     } catch (err: any) {
       setKeyTestState({
         testing: false,
         status: 'error',
-        message: `Ключ недійсний: ${err?.message || 'Помилка мережі'}`,
+        message: `Помилка мережі: ${err?.message || 'Збій з\'єднання'}`,
       });
     }
   };

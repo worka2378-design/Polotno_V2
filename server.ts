@@ -32,16 +32,16 @@ function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMsg: string): Pr
 function normalizeGeminiModel(model?: string): string {
   if (!model) return "gemini-3.6-flash";
   const m = model.trim().toLowerCase();
-  if (m === "gemini-3.1-pro" || m === "gemini-pro" || m === "gemini-1.5-pro" || m === "gemini-2.0-pro") {
+  if (m.includes("pro")) {
     return "gemini-3.1-pro-preview";
   }
-  if (m === "gemini-3.1-flash-lite" || m === "gemini-lite" || m === "flash-lite") {
+  if (m.includes("lite")) {
     return "gemini-3.1-flash-lite";
   }
-  if (m.includes("2.5") || m.includes("1.5") || m.includes("2.0") || m === "gemini-flash") {
-    return "gemini-3.6-flash";
+  if (m.includes("latest")) {
+    return "gemini-flash-latest";
   }
-  return m;
+  return "gemini-3.6-flash";
 }
 
 // Helper for Real-time Web Search (Tavily, Serper, or DuckDuckGo fallback)
@@ -269,7 +269,7 @@ async function handleGeminiGeneration(
 
   const extractedToolCalls: Array<{ name: string; args: any }> = [];
 
-  // Attempt 1: Gemini generation with Canvas Function Declarations + Search Grounding (timeout 25s)
+  // Attempt 1: Gemini generation with Canvas Function Declarations (timeout 25s)
   try {
     const res: any = await withTimeout(
       ai.models.generateContent({
@@ -277,7 +277,7 @@ async function handleGeminiGeneration(
         contents: formattedContents,
         config: {
           systemInstruction,
-          tools: [...canvasTools, { googleSearch: {} }] as any,
+          tools: canvasTools as any,
           temperature: 0.7,
         },
       }),
@@ -294,25 +294,6 @@ async function handleGeminiGeneration(
     let text = res.text ? res.text.trim() : "";
     const parsed = extractToolCallsFromText(text);
     extractedToolCalls.push(...parsed.toolCalls);
-
-    // Extract grounding sources if present
-    const candidate = res.candidates?.[0];
-    const groundingMetadata = candidate?.groundingMetadata;
-    if (groundingMetadata?.groundingChunks && groundingMetadata.groundingChunks.length > 0) {
-      const sources = groundingMetadata.groundingChunks
-        .map((chunk: any) => {
-          if (chunk.web?.uri && chunk.web?.title) {
-            return `- [${chunk.web.title}](${chunk.web.uri})`;
-          }
-          return null;
-        })
-        .filter(Boolean);
-
-      if (sources.length > 0) {
-        const uniqueSources = Array.from(new Set(sources)).slice(0, 4);
-        text += `\n\n🌐 **Джерела (Google Search):**\n${uniqueSources.join("\n")}`;
-      }
-    }
 
     // Handle web_search function call if model invoked web_search
     const searchCall = extractedToolCalls.find((tc) => tc.name === "web_search");
@@ -358,17 +339,16 @@ async function handleGeminiGeneration(
   } catch (canvasErr: any) {
     console.warn("[Gemini Canvas Tools Warning]:", canvasErr?.message || canvasErr);
     const errStr = String(canvasErr);
-    if (errStr.includes("429") || errStr.toLowerCase().includes("quota") || errStr.includes("API_KEY")) {
+    if (errStr.includes("API_KEY_INVALID") || errStr.includes("API key not valid")) {
       throw canvasErr;
     }
   }
 
-
-  // Attempt 2: Standard direct generation with fallback text parsing (timeout 25s)
+  // Attempt 2: Standard generation with gemini-3.6-flash (timeout 25s)
   try {
     const res: any = await withTimeout(
       ai.models.generateContent({
-        model: primaryModel,
+        model: "gemini-3.6-flash",
         contents: formattedContents,
         config: {
           systemInstruction,
@@ -386,7 +366,7 @@ async function handleGeminiGeneration(
   } catch (directErr: any) {
     console.warn("[Gemini Direct Gen Warning]:", directErr?.message || directErr);
     const errStr = String(directErr);
-    if (errStr.includes("429") || errStr.toLowerCase().includes("quota") || errStr.includes("API_KEY")) {
+    if (errStr.includes("API_KEY_INVALID") || errStr.includes("API key not valid")) {
       throw directErr;
     }
   }
@@ -781,6 +761,92 @@ app.post("/api/ai/chat", async (req, res) => {
   } catch (error: any) {
     console.error("AI Chat Route Error:", error);
     res.status(500).json({ error: true, response: error.message || "Внутрішня помилка сервера" });
+  }
+});
+
+// Endpoint for fast API Key Validation without tool calls or heavy context
+app.post("/api/ai/verify-key", async (req, res) => {
+  try {
+    const { provider = "gemini", apiKey, model } = req.body;
+    const activeKey = (apiKey || "").trim() || (provider === "gemini" ? process.env.GEMINI_API_KEY : process.env.DEEPSEEK_API_KEY)?.trim();
+
+    if (!activeKey) {
+      return res.status(400).json({
+        ok: false,
+        message: "API Ключ не вказано.",
+      });
+    }
+
+    if (provider === "gemini") {
+      const ai = new GoogleGenAI({ apiKey: activeKey });
+      const targetModel = normalizeGeminiModel(model);
+      try {
+        const testRes: any = await withTimeout(
+          ai.models.generateContent({
+            model: targetModel,
+            contents: [{ role: "user", parts: [{ text: "Привіт" }] }],
+          }),
+          10000,
+          "Таймаут перевірки ключа Gemini"
+        );
+        if (testRes.text) {
+          return res.json({ ok: true, message: `Ключ дійсний (${targetModel})` });
+        }
+      } catch (err: any) {
+        const msg = err?.message || String(err);
+        if (msg.includes("API_KEY_INVALID") || msg.includes("API key not valid")) {
+          return res.status(400).json({ ok: false, message: "Недійсний API ключ Gemini (перевірте правильність ключа)." });
+        }
+        if (msg.includes("429") || msg.toLowerCase().includes("quota")) {
+          return res.status(429).json({ ok: false, message: "Перевищено ліміт запитів (Quota exceeded) для цієї моделі або акаунту." });
+        }
+        // If pro model failed with quota or error, attempt fallback check with flash
+        if (targetModel !== "gemini-3.6-flash") {
+          try {
+            const fallbackRes: any = await ai.models.generateContent({
+              model: "gemini-3.6-flash",
+              contents: [{ role: "user", parts: [{ text: "Привіт" }] }],
+            });
+            if (fallbackRes.text) {
+              return res.json({ ok: true, message: "Ключ дійсний (для Gemini 3.6 Flash)" });
+            }
+          } catch (fbErr) {}
+        }
+        return res.status(400).json({ ok: false, message: `Помилка Gemini: ${msg.replace(/^Error:\s*/, "")}` });
+      }
+    } else if (provider === "deepseek") {
+      try {
+        const apiRes = await fetch("https://api.deepseek.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${activeKey}`,
+          },
+          body: JSON.stringify({
+            model: model || "deepseek-chat",
+            messages: [{ role: "user", content: "Hi" }],
+            max_tokens: 5,
+          }),
+        });
+        if (apiRes.ok) {
+          return res.json({ ok: true, message: "Ключ DeepSeek дійсний" });
+        } else {
+          if (apiRes.status === 402) {
+            return res.status(402).json({ ok: false, message: "На акаунті DeepSeek вичерпано баланс (HTTP 402)." });
+          }
+          if (apiRes.status === 401) {
+            return res.status(401).json({ ok: false, message: "Недійсний API ключ DeepSeek." });
+          }
+          return res.status(apiRes.status).json({ ok: false, message: `Помилка DeepSeek (HTTP ${apiRes.status})` });
+        }
+      } catch (err: any) {
+        return res.status(500).json({ ok: false, message: `Помилка мережі DeepSeek: ${err?.message}` });
+      }
+    }
+
+    return res.status(400).json({ ok: false, message: "Невідомий провайдер." });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, message: e?.message || "Помилка сервера." });
   }
 });
 
