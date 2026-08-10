@@ -195,51 +195,41 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
   }>({ testing: false, status: 'idle', message: '' });
 
   const handleTestKey = async () => {
-    const keyToTest = geminiApiKey;
-    if (!keyToTest.trim() && !serverAiStatus.hasGeminiKey) {
-      setKeyTestState({
-        testing: false,
-        status: 'error',
-        message: 'Ключ не вказано.',
-      });
+    const keyToTest = geminiApiKey.trim();
+    if (!keyToTest) {
+      setKeyTestState({ testing: false, status: 'error', message: 'Ключ не вказано.' });
       return;
     }
 
     setKeyTestState({ testing: true, status: 'idle', message: 'Перевірка ключа Gemini...' });
 
     try {
-      const res = await fetch('/api/ai/verify-key', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: 'gemini',
-          apiKey: keyToTest.trim() || undefined,
-          model: geminiModel,
-        }),
-      });
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${keyToTest}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: 'Hi' }] }],
+          }),
+        }
+      );
 
-      const data = await res.json();
-
-      if (res.ok && data.ok) {
-        setKeyTestState({
-          testing: false,
-          status: 'success',
-          message: data.message || 'Ключ дійсний',
-        });
+      if (res.ok) {
+        setKeyTestState({ testing: false, status: 'success', message: 'Ключ дійсний ✓ (gemini-2.0-flash)' });
       } else {
-        const reason = data.message || 'Помилка авторизації ключа';
-        setKeyTestState({
-          testing: false,
-          status: 'error',
-          message: reason,
-        });
+        const errData = await res.json().catch(() => ({}));
+        const errMsg = errData?.error?.message || `HTTP ${res.status}`;
+        if (res.status === 400 || res.status === 403) {
+          setKeyTestState({ testing: false, status: 'error', message: 'Недійсний API ключ. Перевірте ключ у Google AI Studio.' });
+        } else if (res.status === 429) {
+          setKeyTestState({ testing: false, status: 'error', message: 'Перевищено ліміт запитів (quota exceeded).' });
+        } else {
+          setKeyTestState({ testing: false, status: 'error', message: `Помилка Gemini: ${errMsg}` });
+        }
       }
     } catch (err: any) {
-      setKeyTestState({
-        testing: false,
-        status: 'error',
-        message: `Помилка мережі: ${err?.message || 'Збій з\'єднання'}`,
-      });
+      setKeyTestState({ testing: false, status: 'error', message: `Помилка мережі: ${err?.message || 'Збій з\'єднання'}` });
     }
   };
 
@@ -283,24 +273,9 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
     }
   }, [initialActiveTab]);
 
-  // Check server health and AI API key availability on mount
+  // No server health check needed — direct Gemini API calls from browser
   useEffect(() => {
-    const checkServerHealth = async () => {
-      try {
-        const res = await fetch('/api/health');
-        if (res.ok) {
-          const data = await res.json();
-          setServerAiStatus({
-            checked: true,
-            configured: Boolean(data.aiConfigured),
-            hasGeminiKey: Boolean(data.hasGeminiKey),
-          });
-        }
-      } catch (e) {
-        setServerAiStatus({ checked: true, configured: false, hasGeminiKey: false });
-      }
-    };
-    checkServerHealth();
+    setServerAiStatus({ checked: true, configured: false, hasGeminiKey: false });
   }, []);
 
   // Save AI settings to localStorage
@@ -373,66 +348,122 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
     };
 
     try {
-      const res = await fetch('/api/ai/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: updatedMessages.map((m) => ({ role: m.role, content: m.content })),
-          provider: 'gemini',
-          contextData,
-          geminiApiKey,
-          geminiModel,
-          tavilyApiKey,
-          serperApiKey,
-        }),
-      });
+      const apiKey = geminiApiKey.trim();
+      if (!apiKey) {
+        throw new Error('NO_KEY');
+      }
 
-      const data = await res.json();
-      const isErr = Boolean(data.error) || !res.ok;
-      const replyText = data.response || 'Вибачте, не вдалося одержати відповідь.';
+      // Визначення правильної назви моделі
+      const modelMap: Record<string, string> = {
+        'gemini-2.0-flash': 'gemini-2.0-flash',
+        'gemini-2.5-pro-preview-06-05': 'gemini-2.5-pro-preview-06-05',
+        'gemini-2.0-flash-lite': 'gemini-2.0-flash-lite',
+      };
+      const resolvedModel = modelMap[geminiModel] || 'gemini-2.0-flash';
+
+      // Системний промт
+      const systemInstruction = `Ти — розумний AI асистент на базі Google Gemini з підтримкою прямого керування полотном.
+
+ТВОЯ РОЛЬ ТА ПРИНЦИПИ ВІДПОВІДІ:
+1. Пряма відповідь без вступів. Завжди відповідай ДИРЕКТНО, чітко, структуровано.
+2. Відповідай на БУДЬ-ЯКІ питання з будь-яких галузей.
+3. Якщо тебе просять створити нотатку, відповідай у форматі: [CREATE_NOTE: Заголовок | Зміст]
+4. Якщо тебе просять SWOT-аналіз: [TOOL_CALL:create_swot_analysis {"projectTitle":"...","strengths":[...],"weaknesses":[...],"opportunities":[...],"threats":[...]}]${
+  contextData.notesSummary && contextData.notesSummary !== 'Полотно порожнє'
+    ? `\n\n[КОНТЕКСТ ПОЛОТНА]:\nВсього нотаток: ${contextData.notesCount}, папок: ${contextData.foldersCount}\n${contextData.notesSummary}`
+    : ''
+}`;
+
+      // Формування contents для Gemini API
+      const geminiContents = updatedMessages
+        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .map((m) => ({
+          role: m.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: m.content }],
+        }));
+
+      if (geminiContents.length === 0) {
+        geminiContents.push({ role: 'user', parts: [{ text: 'Привіт' }] });
+      }
+
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${resolvedModel}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            system_instruction: { parts: [{ text: systemInstruction }] },
+            contents: geminiContents,
+            generationConfig: { temperature: 0.7, maxOutputTokens: 2048 },
+          }),
+        }
+      );
+
+      let replyText = 'Вибачте, не вдалося одержати відповідь.';
+      let isErr = false;
+
+      if (res.ok) {
+        const data = await res.json();
+        replyText = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || replyText;
+      } else {
+        isErr = true;
+        const errData = await res.json().catch(() => ({}));
+        const errMsg = errData?.error?.message || `HTTP ${res.status}`;
+        if (res.status === 400 || res.status === 403) {
+          replyText = 'Помилка: недійсний API ключ. Перевірте ключ у налаштуваннях AI (⚙️).';
+        } else if (res.status === 429) {
+          replyText = 'Перевищено ліміт запитів Gemini API. Зачекайте хвилину або скористайтесь іншим ключем.';
+        } else {
+          replyText = `Помилка Gemini API: ${errMsg}`;
+        }
+      }
 
       let actionNote: { title: string; content: string } | undefined;
       if (!isErr) {
+        // Обробка CREATE_NOTE
         const createNoteMatch = replyText.match(/\[CREATE_NOTE:\s*([^|]+)\|\s*([^\]]+)\]/);
         if (createNoteMatch) {
-          actionNote = {
-            title: createNoteMatch[1].trim(),
-            content: createNoteMatch[2].trim(),
-          };
-          if (onCreateNoteFromAI) {
-            onCreateNoteFromAI(actionNote.title, actionNote.content);
-          }
+          actionNote = { title: createNoteMatch[1].trim(), content: createNoteMatch[2].trim() };
+          if (onCreateNoteFromAI) onCreateNoteFromAI(actionNote.title, actionNote.content);
         }
 
-        // Execute function calling tool calls directly on the canvas
-        if (Array.isArray(data.toolCalls) && data.toolCalls.length > 0 && onExecuteAiToolCall) {
-          data.toolCalls.forEach((tc: { name: string; args: any }) => {
-            onExecuteAiToolCall(tc);
-          });
+        // Обробка TOOL_CALL
+        const toolCallRegex = /\[TOOL_CALL:([a-zA-Z0-9_]+)\s*(\{[\s\S]*?\})\]/g;
+        let tcMatch;
+        while ((tcMatch = toolCallRegex.exec(replyText)) !== null) {
+          try {
+            const tc = { name: tcMatch[1], args: JSON.parse(tcMatch[2]) };
+            if (onExecuteAiToolCall) onExecuteAiToolCall(tc);
+          } catch (e) {}
         }
       }
 
       const assistantMsg: AIChatMessage = {
         id: `msg_${Date.now()}_a`,
         role: 'assistant',
-        content: isErr ? replyText : replyText.replace(/\[CREATE_NOTE:[^\]]+\]/g, '').trim(),
+        content: isErr
+          ? replyText
+          : replyText.replace(/\[CREATE_NOTE:[^\]]+\]/g, '').replace(/\[TOOL_CALL:[^\]]+\]/g, '').trim(),
         timestamp: Date.now(),
-        provider: aiProvider,
+        provider: 'gemini',
         isError: isErr,
         actionNote,
       };
 
       setAiMessages((prev) => [...prev, assistantMsg]);
     } catch (err: any) {
+      const isNoKey = err?.message === 'NO_KEY';
       console.error('AI chat request failed:', err);
       setAiMessages((prev) => [
         ...prev,
         {
           id: `msg_${Date.now()}_err`,
           role: 'assistant',
-          content: `Помилка з'єднання з AI сервісом (${aiProvider}). Перевірте з'єднання з інтернетом або налаштування API ключа.`,
+          content: isNoKey
+            ? 'AI не налаштовано. Введіть Gemini API ключ у налаштуваннях AI (⚙️ → вкладка AI).'
+            : `Помилка з'єднання з Gemini API. Перевірте інтернет або API ключ у налаштуваннях.`,
           timestamp: Date.now(),
-          provider: aiProvider,
+          provider: 'gemini',
           isError: true,
         },
       ]);
