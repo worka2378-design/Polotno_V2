@@ -134,15 +134,12 @@ export interface HistoryState {
   folders?: Folder[];
 }
 
-export type AIProvider = 'gemini' | 'deepseek' | 'local';
+export type AIProvider = 'gemini';
 
 export interface AISettings {
   provider: AIProvider;
   geminiApiKey: string;
   geminiModel: string;
-  deepseekApiKey: string;
-  deepseekModel: string;
-  ollamaModel: string;
 }
 
 export interface AIChatMessage {

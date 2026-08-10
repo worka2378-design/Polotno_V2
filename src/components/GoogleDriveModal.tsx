@@ -364,7 +364,7 @@ export const GoogleDriveModal: React.FC<GoogleDriveModalProps> = ({
 
           {/* Account status or Google Sign-In button */}
           <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between px-3.5 py-2 border border-stone-300 rounded-full bg-[#e2d8c7]/50">
+            <div className="flex items-center justify-between py-1">
               {currentUser ? (
                 <div className="flex items-center justify-between w-full">
                   <div className="flex items-center gap-2 min-w-0">
@@ -394,12 +394,12 @@ export const GoogleDriveModal: React.FC<GoogleDriveModalProps> = ({
                   <button
                     onClick={handleGoogleLogin}
                     disabled={isLoggingIn}
-                    className="flex items-center gap-1.5 px-3 py-1 bg-stone-900 text-stone-100 hover:bg-stone-800 transition-colors text-xs font-medium rounded-full cursor-pointer disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 bg-stone-900 text-stone-100 hover:bg-stone-800 transition-colors text-xs font-medium rounded-full cursor-pointer disabled:opacity-50"
                   >
                     {isLoggingIn ? (
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <RefreshCw className="w-4 h-4 animate-spin" />
                     ) : (
-                      <Cloud className="w-3.5 h-3.5" />
+                      <Cloud className="w-4 h-4" />
                     )}
                     <span>Увійти в Google</span>
                   </button>
@@ -408,21 +408,21 @@ export const GoogleDriveModal: React.FC<GoogleDriveModalProps> = ({
             </div>
 
             {loginError && (
-              <div className="flex items-start gap-2 p-2.5 bg-amber-100/80 border border-amber-300 rounded-2xl text-xs text-amber-950 leading-relaxed">
-                <AlertCircle className="w-4 h-4 text-amber-800 shrink-0 mt-0.5" />
+              <div className="flex items-start gap-2 p-2.5 bg-stone-200/60 rounded-2xl text-xs text-stone-800 leading-relaxed">
+                <AlertCircle className="w-4 h-4 text-stone-700 shrink-0 mt-0.5" />
                 <span className="flex-1">{loginError}</span>
               </div>
             )}
 
             {!isAIStudioEnvironment() && !currentUser && !loginError && (
-              <p className="text-[11px] text-stone-500 px-2 leading-relaxed">
+              <p className="text-[11px] text-stone-500 leading-relaxed">
                 Поза середовищем AI Studio авторизація Google залежить від дозволених доменів вашого Firebase проєкту.
               </p>
             )}
           </div>
 
-          {/* Navigation Tabs (Seamless flat text tabs without divider line) */}
-          <div className="flex items-center gap-3 pt-1 border-b border-stone-300/40 pb-2">
+          {/* Navigation Tabs (Flat seamless tabs without line divider) */}
+          <div className="flex items-center gap-4 py-1">
             <button
               onClick={() => setActiveTab('backup')}
               className={`text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
@@ -502,6 +502,28 @@ export const GoogleDriveModal: React.FC<GoogleDriveModalProps> = ({
 
               {/* Action buttons (Clean option rows, borderless) */}
               <div className="flex flex-col gap-1 pt-1">
+                {onOpenPcSyncModal && (
+                  <button
+                    onClick={() => {
+                      onClose();
+                      onOpenPcSyncModal();
+                    }}
+                    className="flex items-center gap-3 px-3 py-2.5 text-left transition-colors group/opt w-full cursor-pointer rounded-full"
+                  >
+                    <HardDrive className="w-4 h-4 text-stone-600 group-hover/opt:text-stone-900 transition-colors shrink-0" />
+                    <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium text-stone-700 group-hover/opt:text-stone-900 transition-colors truncate">
+                        Локальна папка ПК (Авто-збереження)
+                      </span>
+                      {pcFolderName && (
+                        <span className="text-xs font-medium text-stone-500 truncate shrink-0 max-w-[120px]">
+                          {pcFolderName}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                )}
+
                 <button
                   onClick={handleManualSave}
                   disabled={isSaving || isRestoring}
@@ -583,28 +605,6 @@ export const GoogleDriveModal: React.FC<GoogleDriveModalProps> = ({
                       <span className="text-sm font-medium text-stone-700 group-hover/opt:text-stone-900 transition-colors">
                         Імпорт бекапу (.json)
                       </span>
-                    </div>
-                  </button>
-                )}
-
-                {onOpenPcSyncModal && (
-                  <button
-                    onClick={() => {
-                      onClose();
-                      onOpenPcSyncModal();
-                    }}
-                    className="flex items-center gap-3 px-3 py-2.5 text-left transition-colors group/opt w-full cursor-pointer rounded-full"
-                  >
-                    <HardDrive className="w-4 h-4 text-stone-600 group-hover/opt:text-stone-900 transition-colors shrink-0" />
-                    <div className="flex-1 min-w-0 flex items-center justify-between gap-1">
-                      <span className="text-sm font-medium text-stone-700 group-hover/opt:text-stone-900 transition-colors">
-                        Локальна папка ПК (Авто-збереження)
-                      </span>
-                      {pcFolderName && (
-                        <span className="text-xs text-stone-500 font-medium truncate max-w-[120px]">
-                          {pcFolderName}
-                        </span>
-                      )}
                     </div>
                   </button>
                 )}

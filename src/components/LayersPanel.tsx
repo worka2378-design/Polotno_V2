@@ -28,49 +28,6 @@ const GeminiLogo = ({ className = "w-4 h-4" }: { className?: string }) => (
     </defs>
   </svg>
 );
-
-const DeepSeekLogo = ({ className = "w-4 h-4" }: { className?: string }) => (
-  <svg className={`${className} shrink-0`} viewBox="0 0 24 24" fill="none">
-    <rect width="24" height="24" rx="6" fill="#4D6BFE" />
-    <path
-      d="M16.5 14.5C15.7 16.5 13.5 17.5 11 17.5C7.7 17.5 5 15 5 11.7C5 8.5 7.6 6 10.8 6C13.2 6 15.4 7.4 16.3 9.5"
-      stroke="#FFFFFF"
-      strokeWidth="2.2"
-      strokeLinecap="round"
-    />
-    <circle cx="15.5" cy="11" r="1.2" fill="#FFFFFF" />
-  </svg>
-);
-
-const OllamaLogo = ({ className = "w-4 h-4" }: { className?: string }) => (
-  <svg className={`${className} shrink-0`} viewBox="0 0 24 24" fill="none">
-    <rect width="24" height="24" rx="6" fill="#18181B" />
-    <path
-      d="M12 6v4M9 10h6M9 13h6M10 16h4"
-      stroke="#FFFFFF"
-      strokeWidth="2"
-      strokeLinecap="round"
-    />
-    <circle cx="9" cy="7.5" r="1" fill="#38BDF8" />
-    <circle cx="15" cy="7.5" r="1" fill="#38BDF8" />
-  </svg>
-);
-
-const TavilyLogo = ({ className = "w-4 h-4" }: { className?: string }) => (
-  <svg className={`${className} shrink-0`} viewBox="0 0 24 24" fill="none">
-    <rect width="24" height="24" rx="6" fill="#00B4D8" />
-    <circle cx="12" cy="12" r="5" stroke="#FFFFFF" strokeWidth="2" />
-    <path d="M12 7v10M7 12h10" stroke="#FFFFFF" strokeWidth="1.8" strokeLinecap="round" />
-  </svg>
-);
-
-const SerperLogo = ({ className = "w-4 h-4" }: { className?: string }) => (
-  <svg className={`${className} shrink-0`} viewBox="0 0 24 24" fill="none">
-    <rect width="24" height="24" rx="6" fill="#4285F4" />
-    <circle cx="10.5" cy="10.5" r="4.5" stroke="#FFFFFF" strokeWidth="2" />
-    <path d="M14 14l4 4" stroke="#FFFFFF" strokeWidth="2.2" strokeLinecap="round" />
-  </svg>
-);
 import { Note, Point, Folder, StandaloneLink, LinkFolder, LinkMetadata, StandaloneFile, FileFolder, FileMetadata, AIChatMessage, AIProvider } from '../types';
 import { COLOR_PALETTE_ITEMS } from '../utils/theme';
 import { countLinksInContent, extractLinksFromContent } from '../utils/linkUtils';
@@ -218,22 +175,17 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
   const [aiProvider, setAiProvider] = useState<AIProvider>('gemini');
   
   // AI Config & Custom Keys State
+  const VALID_GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-2.5-pro-preview-06-05', 'gemini-2.0-flash-lite'];
   const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('infinite_notepad_gemini_api_key') || '');
   const [geminiModel, setGeminiModel] = useState(() => {
     const saved = localStorage.getItem('infinite_notepad_gemini_model');
-    if (saved && (saved.includes('2.5') || saved.includes('1.5') || saved === 'gemini-3.1-pro')) {
-      return 'gemini-3.6-flash';
+    if (saved && VALID_GEMINI_MODELS.includes(saved)) {
+      return saved;
     }
-    return saved || 'gemini-3.6-flash';
+    return 'gemini-2.0-flash';
   });
-  const [deepseekApiKey, setDeepseekApiKey] = useState(() => localStorage.getItem('infinite_notepad_deepseek_api_key') || '');
-  const [deepseekModel, setDeepseekModel] = useState(() => localStorage.getItem('infinite_notepad_deepseek_model') || 'deepseek-chat');
   const [tavilyApiKey, setTavilyApiKey] = useState(() => localStorage.getItem('infinite_notepad_tavily_api_key') || '');
   const [serperApiKey, setSerperApiKey] = useState(() => localStorage.getItem('infinite_notepad_serper_api_key') || '');
-  const [ollamaModel, setOllamaModel] = useState(() => localStorage.getItem('infinite_notepad_ollama_model') || 'llama3');
-  const [ollamaUrl, setOllamaUrl] = useState(() => localStorage.getItem('infinite_notepad_ollama_url') || 'http://127.0.0.1:11434');
-  const [ollamaModelsList, setOllamaModelsList] = useState<{ name: string; size?: number }[]>([]);
-  const [ollamaStatus, setOllamaStatus] = useState<'idle' | 'checking' | 'online' | 'offline'>('idle');
   const [isAiSettingsOpen, setIsAiSettingsOpen] = useState(false);
 
   const [keyTestState, setKeyTestState] = useState<{
@@ -242,9 +194,9 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
     message: string;
   }>({ testing: false, status: 'idle', message: '' });
 
-  const handleTestKey = async (providerToTest: 'gemini' | 'deepseek') => {
-    const keyToTest = providerToTest === 'gemini' ? geminiApiKey : deepseekApiKey;
-    if (!keyToTest.trim() && !(providerToTest === 'gemini' ? serverAiStatus.hasGeminiKey : serverAiStatus.hasDeepSeekKey)) {
+  const handleTestKey = async () => {
+    const keyToTest = geminiApiKey;
+    if (!keyToTest.trim() && !serverAiStatus.hasGeminiKey) {
       setKeyTestState({
         testing: false,
         status: 'error',
@@ -253,16 +205,16 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
       return;
     }
 
-    setKeyTestState({ testing: true, status: 'idle', message: 'Перевірка ключа...' });
+    setKeyTestState({ testing: true, status: 'idle', message: 'Перевірка ключа Gemini...' });
 
     try {
       const res = await fetch('/api/ai/verify-key', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          provider: providerToTest,
+          provider: 'gemini',
           apiKey: keyToTest.trim() || undefined,
-          model: providerToTest === 'gemini' ? geminiModel : deepseekModel,
+          model: geminiModel,
         }),
       });
 
@@ -295,8 +247,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
     checked: boolean;
     configured: boolean;
     hasGeminiKey: boolean;
-    hasDeepSeekKey: boolean;
-  }>({ checked: false, configured: false, hasGeminiKey: false, hasDeepSeekKey: false });
+  }>({ checked: false, configured: false, hasGeminiKey: false });
 
   const [aiMessages, setAiMessages] = useState<AIChatMessage[]>(() => {
     try {
@@ -307,7 +258,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
       {
         id: 'msg_welcome',
         role: 'assistant',
-        content: 'Привіт! Я ваш універсальний AI асистент. Ставте будь-які запитання, просіть написати статті, код, пояснити теми, зробити розрахунки чи допомогти з організацією полотна.',
+        content: 'Привіт! Я ваш універсальний AI асистент на базі Google Gemini. Ставте будь-які запитання, просіть написати статті, код, пояснити теми, зробити розрахунки чи допомогти з організацією полотна.',
         timestamp: Date.now(),
         provider: 'gemini',
       },
@@ -343,11 +294,10 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
             checked: true,
             configured: Boolean(data.aiConfigured),
             hasGeminiKey: Boolean(data.hasGeminiKey),
-            hasDeepSeekKey: Boolean(data.hasDeepSeekKey),
           });
         }
       } catch (e) {
-        setServerAiStatus({ checked: true, configured: false, hasGeminiKey: false, hasDeepSeekKey: false });
+        setServerAiStatus({ checked: true, configured: false, hasGeminiKey: false });
       }
     };
     checkServerHealth();
@@ -358,76 +308,10 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
     try {
       localStorage.setItem('infinite_notepad_gemini_api_key', geminiApiKey);
       localStorage.setItem('infinite_notepad_gemini_model', geminiModel);
-      localStorage.setItem('infinite_notepad_deepseek_api_key', deepseekApiKey);
-      localStorage.setItem('infinite_notepad_deepseek_model', deepseekModel);
       localStorage.setItem('infinite_notepad_tavily_api_key', tavilyApiKey);
       localStorage.setItem('infinite_notepad_serper_api_key', serperApiKey);
-      localStorage.setItem('infinite_notepad_ollama_model', ollamaModel);
-      localStorage.setItem('infinite_notepad_ollama_url', ollamaUrl);
     } catch (e) {}
-  }, [geminiApiKey, geminiModel, deepseekApiKey, deepseekModel, tavilyApiKey, serperApiKey, ollamaModel, ollamaUrl]);
-
-  // Function to actively query/detect real local models from Ollama server
-  const checkOllamaModels = async () => {
-    setOllamaStatus('checking');
-    const cleanUrl = ollamaUrl.trim().replace(/\/$/, '');
-    const urlsToTry = Array.from(new Set([
-      cleanUrl,
-      'http://127.0.0.1:11434',
-      'http://localhost:11434',
-    ])).filter(Boolean);
-
-    // 1. Direct browser fetch to local Ollama ports
-    for (const baseUrl of urlsToTry) {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 2500);
-        const res = await fetch(`${baseUrl}/api/tags`, { signal: controller.signal });
-        clearTimeout(timeout);
-
-        if (res.ok) {
-          const data = await res.json();
-          const models = (data.models || []).map((m: any) => ({
-            name: m.name,
-            size: m.size,
-            modifiedAt: m.modified_at,
-          }));
-          setOllamaStatus('online');
-          setOllamaModelsList(models);
-          if (models.length > 0 && !models.some((m: any) => m.name === ollamaModel)) {
-            setOllamaModel(models[0].name);
-          }
-          return;
-        }
-      } catch (e) {
-        // Direct browser fetch failed (e.g. CORS or offline)
-      }
-    }
-
-    // 2. Fallback to server proxy
-    try {
-      const res = await fetch('/api/ai/ollama/models');
-      const data = await res.json();
-      if (data.online && Array.isArray(data.models) && data.models.length > 0) {
-        setOllamaStatus('online');
-        setOllamaModelsList(data.models);
-        if (data.models.length > 0 && !data.models.some((m: any) => m.name === ollamaModel)) {
-          setOllamaModel(data.models[0].name);
-        }
-        return;
-      }
-    } catch (e) {}
-
-    setOllamaStatus('offline');
-    setOllamaModelsList([]);
-  };
-
-  // Auto check Ollama on opening AI settings or selecting local provider
-  useEffect(() => {
-    if (isAiSettingsOpen || aiProvider === 'local') {
-      checkOllamaModels();
-    }
-  }, [isAiSettingsOpen, aiProvider]);
+  }, [geminiApiKey, geminiModel, tavilyApiKey, serperApiKey]);
 
   useEffect(() => {
     try {
@@ -488,94 +372,18 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
       notesSummary: notesSummary || 'Полотно порожнє',
     };
 
-    // If provider is local Ollama, try direct browser-side call to user's local PC first
-    if (aiProvider === 'local') {
-      const cleanUrl = ollamaUrl.trim().replace(/\/$/, '');
-      const urlsToTry = Array.from(new Set([
-        cleanUrl,
-        'http://127.0.0.1:11434',
-        'http://localhost:11434',
-      ])).filter(Boolean);
-
-      let localReply: string | null = null;
-
-      for (const baseUrl of urlsToTry) {
-        try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 25000);
-
-          const systemMsg = `Ти — універсальний AI асистент. Давай відповіді українською мовою. Контекст полотна користувача (нотатки): ${notesSummary || 'порожньо'}`;
-          const formattedMsgs = [
-            { role: 'system', content: systemMsg },
-            ...updatedMessages.map((m) => ({
-              role: m.role === 'assistant' ? 'assistant' : 'user',
-              content: m.content,
-            })),
-          ];
-
-          const res = await fetch(`${baseUrl}/api/chat`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            signal: controller.signal,
-            body: JSON.stringify({
-              model: ollamaModel || 'llama3',
-              stream: false,
-              messages: formattedMsgs,
-            }),
-          });
-          clearTimeout(timeout);
-
-          if (res.ok) {
-            const data = await res.json();
-            localReply = data.message?.content || null;
-            if (localReply) break;
-          }
-        } catch (err) {
-          // Direct browser call failed
-        }
-      }
-
-      if (localReply) {
-        let actionNote: { title: string; content: string } | undefined;
-        const createNoteMatch = localReply.match(/\[CREATE_NOTE:\s*([^|]+)\|\s*([^\]]+)\]/);
-        if (createNoteMatch) {
-          actionNote = {
-            title: createNoteMatch[1].trim(),
-            content: createNoteMatch[2].trim(),
-          };
-        }
-
-        const assistantMsg: AIChatMessage = {
-          id: `msg_${Date.now()}_a`,
-          role: 'assistant',
-          content: localReply.replace(/\[CREATE_NOTE:[^\]]+\]/g, '').trim(),
-          timestamp: Date.now(),
-          provider: 'local',
-          actionNote,
-        };
-
-        setAiMessages([...updatedMessages, assistantMsg]);
-        setIsAiLoading(false);
-        return;
-      }
-    }
-
     try {
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: updatedMessages.map((m) => ({ role: m.role, content: m.content })),
-          provider: aiProvider,
+          provider: 'gemini',
           contextData,
           geminiApiKey,
           geminiModel,
-          deepseekApiKey,
-          deepseekModel,
           tavilyApiKey,
           serperApiKey,
-          ollamaModel,
-          ollamaUrl,
         }),
       });
 
@@ -2785,247 +2593,71 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
                 </button>
               </div>
 
-              {/* Provider Selector Tabs */}
-              <div className="flex items-center gap-1 p-1 bg-stone-300/40 rounded-full">
-                <button
-                  type="button"
-                  onClick={() => setAiProvider('gemini')}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 text-xs font-medium rounded-full transition-all cursor-pointer ${
-                    aiProvider === 'gemini'
-                      ? 'bg-stone-900 text-white shadow-xs'
-                      : 'text-stone-700 hover:text-stone-900'
-                  }`}
-                >
-                  <GeminiLogo className="w-3.5 h-3.5" />
-                  <span>Gemini</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setAiProvider('deepseek')}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 text-xs font-medium rounded-full transition-all cursor-pointer ${
-                    aiProvider === 'deepseek'
-                      ? 'bg-stone-900 text-white shadow-xs'
-                      : 'text-stone-700 hover:text-stone-900'
-                  }`}
-                >
-                  <DeepSeekLogo className="w-3.5 h-3.5" />
-                  <span>DeepSeek</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setAiProvider('local')}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 text-xs font-medium rounded-full transition-all cursor-pointer ${
-                    aiProvider === 'local'
-                      ? 'bg-stone-900 text-white shadow-xs'
-                      : 'text-stone-700 hover:text-stone-900'
-                  }`}
-                >
-                  <OllamaLogo className="w-3.5 h-3.5" />
-                  <span>Ollama</span>
-                </button>
-              </div>
-
               {/* Active Provider Controls & Connectivity Check */}
               <div className="space-y-2.5 pt-0.5">
-                {aiProvider === 'gemini' && (
-                  <>
-                    <div className="flex items-center justify-between text-xs font-semibold text-stone-900 px-0.5">
-                      <div className="flex items-center gap-1.5">
-                        <GeminiLogo className="w-4 h-4" />
-                        <span>Google Gemini</span>
-                      </div>
-                      {(geminiApiKey || serverAiStatus.hasGeminiKey) && (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-800 bg-emerald-100/90 px-2 py-0.5 rounded-full border border-emerald-300">
-                          <Check className="w-3.5 h-3.5 text-emerald-600 font-bold" /> Підключено
-                        </span>
-                      )}
-                    </div>
+                <div className="flex items-center justify-between text-xs font-semibold text-stone-900 px-0.5">
+                  <div className="flex items-center gap-1.5">
+                    <GeminiLogo className="w-4 h-4" />
+                    <span>Google Gemini</span>
+                  </div>
+                  {(geminiApiKey || serverAiStatus.hasGeminiKey) && (
+                    <Check className="w-4 h-4 text-stone-800 shrink-0" />
+                  )}
+                </div>
 
-                    <div className="space-y-1">
-                      <select
-                        value={geminiModel}
-                        onChange={(e) => setGeminiModel(e.target.value)}
-                        className="w-full bg-[#e2d8c7] text-stone-900 text-xs font-medium px-3 py-1.5 rounded-full border border-stone-300 outline-none cursor-pointer"
-                      >
-                        <option value="gemini-3.6-flash">Gemini 3.6 Flash (Швидка + Пошук)</option>
-                        <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (Глибокий аналіз)</option>
-                        <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite (Легка)</option>
-                      </select>
-                    </div>
+                <div className="space-y-1">
+                  <select
+                    value={geminiModel}
+                    onChange={(e) => setGeminiModel(e.target.value)}
+                    className="w-full bg-[#e2d8c7] text-stone-900 text-xs font-medium px-3 py-1.5 rounded-full border border-stone-300 outline-none cursor-pointer"
+                  >
+                    <option value="gemini-2.0-flash">Gemini 2.0 Flash (Швидка + Пошук)</option>
+                    <option value="gemini-2.5-pro-preview-06-05">Gemini 2.5 Pro Preview (Глибокий аналіз)</option>
+                    <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (Легка)</option>
+                  </select>
+                </div>
 
-                    <div className="flex items-center gap-1.5">
-                      <div className="relative flex-1">
-                        <input
-                          type="password"
-                          value={geminiApiKey}
-                          onChange={(e) => {
-                            setGeminiApiKey(e.target.value);
-                            setKeyTestState({ testing: false, status: 'idle', message: '' });
-                          }}
-                          placeholder="Введіть API Ключ"
-                          className="w-full bg-[#e2d8c7] text-stone-900 text-xs px-3 py-1.5 rounded-full border border-stone-300 outline-none placeholder:text-stone-400 pl-8 font-mono"
-                        />
-                        <Key className="w-3.5 h-3.5 text-stone-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                      </div>
-                      <button
-                        onClick={() => handleTestKey('gemini')}
-                        disabled={keyTestState.testing}
-                        className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-full bg-stone-900 text-white font-medium hover:bg-stone-800 transition-colors cursor-pointer disabled:opacity-50 shrink-0"
-                      >
-                        {keyTestState.testing ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <RefreshCw className="w-3.5 h-3.5" />
-                        )}
-                        <span>Тест</span>
-                      </button>
-                    </div>
-
-                    {keyTestState.status !== 'idle' && (
-                      <div className={`text-[11px] font-medium px-3 py-1.5 rounded-full border flex items-center gap-1.5 ${
-                        keyTestState.status === 'success'
-                          ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                          : 'bg-rose-50 border-rose-200 text-rose-800'
-                      }`}>
-                        {keyTestState.status === 'success' ? (
-                          <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                        ) : (
-                          <X className="w-3.5 h-3.5 text-rose-600 shrink-0" />
-                        )}
-                        <span className="truncate">{keyTestState.message}</span>
-                      </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="relative flex-1">
+                    <input
+                      type="password"
+                      value={geminiApiKey}
+                      onChange={(e) => {
+                        setGeminiApiKey(e.target.value);
+                        setKeyTestState({ testing: false, status: 'idle', message: '' });
+                      }}
+                      placeholder="Введіть API Ключ"
+                      className="w-full bg-[#e2d8c7] text-stone-900 text-xs px-3 py-1.5 rounded-full border border-stone-300 outline-none placeholder:text-stone-400 pl-8 font-mono"
+                    />
+                    <Key className="w-3.5 h-3.5 text-stone-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  </div>
+                  <button
+                    onClick={handleTestKey}
+                    disabled={keyTestState.testing}
+                    className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-full bg-stone-900 text-white font-medium hover:bg-stone-800 transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+                  >
+                    {keyTestState.testing ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-3.5 h-3.5" />
                     )}
-                  </>
-                )}
+                    <span>Тест</span>
+                  </button>
+                </div>
 
-                {aiProvider === 'deepseek' && (
-                  <>
-                    <div className="flex items-center justify-between text-xs font-semibold text-stone-900 px-0.5">
-                      <div className="flex items-center gap-1.5">
-                        <DeepSeekLogo className="w-4 h-4" />
-                        <span>DeepSeek AI</span>
-                      </div>
-                      {(deepseekApiKey || serverAiStatus.hasDeepSeekKey) && (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-800 bg-emerald-100/90 px-2 py-0.5 rounded-full border border-emerald-300">
-                          <Check className="w-3.5 h-3.5 text-emerald-600 font-bold" /> Підключено
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="space-y-1">
-                      <select
-                        value={deepseekModel}
-                        onChange={(e) => setDeepseekModel(e.target.value)}
-                        className="w-full bg-[#e2d8c7] text-stone-900 text-xs font-medium px-3 py-1.5 rounded-full border border-stone-300 outline-none cursor-pointer"
-                      >
-                        <option value="deepseek-chat">DeepSeek Chat (V3)</option>
-                        <option value="deepseek-reasoner">DeepSeek Reasoner (R1)</option>
-                      </select>
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
-                      <div className="relative flex-1">
-                        <input
-                          type="password"
-                          value={deepseekApiKey}
-                          onChange={(e) => {
-                            setDeepseekApiKey(e.target.value);
-                            setKeyTestState({ testing: false, status: 'idle', message: '' });
-                          }}
-                          placeholder="Введіть API Ключ"
-                          className="w-full bg-[#e2d8c7] text-stone-900 text-xs px-3 py-1.5 rounded-full border border-stone-300 outline-none placeholder:text-stone-400 pl-8 font-mono"
-                        />
-                        <Key className="w-3.5 h-3.5 text-stone-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                      </div>
-                      <button
-                        onClick={() => handleTestKey('deepseek')}
-                        disabled={keyTestState.testing}
-                        className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-full bg-stone-900 text-white font-medium hover:bg-stone-800 transition-colors cursor-pointer disabled:opacity-50 shrink-0"
-                      >
-                        {keyTestState.testing ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <RefreshCw className="w-3.5 h-3.5" />
-                        )}
-                        <span>Тест</span>
-                      </button>
-                    </div>
-
-                    {keyTestState.status !== 'idle' && (
-                      <div className={`text-[11px] font-medium px-3 py-1.5 rounded-full border flex items-center gap-1.5 ${
-                        keyTestState.status === 'success'
-                          ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                          : 'bg-rose-50 border-rose-200 text-rose-800'
-                      }`}>
-                        {keyTestState.status === 'success' ? (
-                          <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                        ) : (
-                          <X className="w-3.5 h-3.5 text-rose-600 shrink-0" />
-                        )}
-                        <span className="truncate">{keyTestState.message}</span>
-                      </div>
+                {keyTestState.status !== 'idle' && (
+                  <div className={`text-[11px] font-medium px-3 py-1.5 rounded-full border flex items-center gap-1.5 ${
+                    keyTestState.status === 'success'
+                      ? 'bg-stone-200/80 border-stone-300 text-stone-900'
+                      : 'bg-stone-200/80 border-stone-300 text-stone-900'
+                  }`}>
+                    {keyTestState.status === 'success' ? (
+                      <Check className="w-3.5 h-3.5 text-stone-800 shrink-0" />
+                    ) : (
+                      <X className="w-3.5 h-3.5 text-stone-800 shrink-0" />
                     )}
-                  </>
-                )}
-
-                {aiProvider === 'local' && (
-                  <>
-                    <div className="flex items-center justify-between text-xs font-semibold text-stone-900 px-0.5">
-                      <div className="flex items-center gap-1.5">
-                        <OllamaLogo className="w-4 h-4" />
-                        <span>Ollama Local</span>
-                      </div>
-                      {ollamaStatus === 'online' && (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-800 bg-emerald-100/90 px-2 py-0.5 rounded-full border border-emerald-300">
-                          <Check className="w-3.5 h-3.5 text-emerald-600 font-bold" /> Онлайн ({ollamaModelsList.length})
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        type="text"
-                        value={ollamaUrl}
-                        onChange={(e) => setOllamaUrl(e.target.value)}
-                        placeholder="http://127.0.0.1:11434"
-                        className="flex-1 bg-[#e2d8c7] text-stone-900 text-xs px-3 py-1.5 rounded-full border border-stone-300 outline-none placeholder:text-stone-400 font-mono"
-                      />
-                      <button
-                        onClick={checkOllamaModels}
-                        disabled={ollamaStatus === 'checking'}
-                        className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-full bg-stone-900 text-white font-medium hover:bg-stone-800 transition-colors cursor-pointer disabled:opacity-50 shrink-0"
-                      >
-                        <RefreshCw className={`w-3.5 h-3.5 ${ollamaStatus === 'checking' ? 'animate-spin' : ''}`} />
-                        <span>Тест</span>
-                      </button>
-                    </div>
-
-                    <div>
-                      {ollamaModelsList.length > 0 ? (
-                        <select
-                          value={ollamaModel}
-                          onChange={(e) => setOllamaModel(e.target.value)}
-                          className="w-full bg-[#e2d8c7] text-stone-900 text-xs font-medium px-3 py-1.5 rounded-full border border-stone-300 outline-none cursor-pointer"
-                        >
-                          {ollamaModelsList.map((m) => (
-                            <option key={m.name} value={m.name}>
-                              {m.name} {m.size ? `(${(m.size / (1024 * 1024 * 1024)).toFixed(1)} GB)` : ''}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input
-                          type="text"
-                          value={ollamaModel}
-                          onChange={(e) => setOllamaModel(e.target.value)}
-                          placeholder="llama3, mistral..."
-                          className="w-full bg-[#e2d8c7] text-stone-900 text-xs px-3 py-1.5 rounded-full border border-stone-300 outline-none placeholder:text-stone-400 font-mono"
-                        />
-                      )}
-                    </div>
-                  </>
+                    <span className="truncate">{keyTestState.message}</span>
+                  </div>
                 )}
               </div>
 
@@ -3040,13 +2672,11 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
                 <div className="space-y-1">
                   <div className="flex items-center justify-between text-xs font-medium text-stone-800 px-0.5">
                     <div className="flex items-center gap-1.5">
-                      <TavilyLogo className="w-4 h-4" />
+                      <Globe className="w-3.5 h-3.5 text-stone-600" />
                       <span>Tavily Search API</span>
                     </div>
                     {tavilyApiKey && (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-800 bg-emerald-100/90 px-2 py-0.5 rounded-full border border-emerald-300">
-                        <Check className="w-3.5 h-3.5 text-emerald-600 font-bold" /> Підключено
-                      </span>
+                      <Check className="w-4 h-4 text-stone-800 shrink-0" />
                     )}
                   </div>
                   <div className="relative">
@@ -3065,13 +2695,11 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
                 <div className="space-y-1">
                   <div className="flex items-center justify-between text-xs font-medium text-stone-800 px-0.5">
                     <div className="flex items-center gap-1.5">
-                      <SerperLogo className="w-4 h-4" />
+                      <Search className="w-3.5 h-3.5 text-stone-600" />
                       <span>Serper Google Search</span>
                     </div>
                     {serperApiKey && (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-800 bg-emerald-100/90 px-2 py-0.5 rounded-full border border-emerald-300">
-                        <Check className="w-3.5 h-3.5 text-emerald-600 font-bold" /> Підключено
-                      </span>
+                      <Check className="w-4 h-4 text-stone-800 shrink-0" />
                     )}
                   </div>
                   <div className="relative">
@@ -3113,12 +2741,12 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
                 )}
 
                 {/* API Key missing notice if running outside AI Studio without server key or custom key */}
-                {!geminiApiKey && !serverAiStatus.hasGeminiKey && !deepseekApiKey && !serverAiStatus.hasDeepSeekKey && (
+                {!geminiApiKey && !serverAiStatus.hasGeminiKey && (
                   <div className="bg-amber-50 border border-amber-200/80 p-2.5 rounded-2xl text-[11px] text-amber-900 space-y-1.5 select-none">
                     <div className="flex items-center justify-between font-semibold">
                       <span className="flex items-center gap-1">
                         <Key className="w-3.5 h-3.5 text-amber-700" />
-                        <span>Потрібен API ключ</span>
+                        <span>Потрібен API ключ Gemini</span>
                       </span>
                       <button
                         onClick={() => setIsAiSettingsOpen(true)}
@@ -3128,7 +2756,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
                       </button>
                     </div>
                     <p className="text-[10.5px] leading-snug text-amber-800">
-                      Для використання AI введіть ваш безкоштовний ключ Gemini чи DeepSeek у налаштуваннях AI.
+                      Для використання AI введіть ваш безкоштовний ключ Google Gemini у налаштуваннях AI.
                     </p>
                   </div>
                 )}
@@ -3383,12 +3011,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setIsAiSettingsOpen(!isAiSettingsOpen);
-                    if (!isAiSettingsOpen) {
-                      checkOllamaModels();
-                    }
-                  }}
+                  onClick={() => setIsAiSettingsOpen(!isAiSettingsOpen)}
                   className={`p-1.5 transition-colors cursor-pointer shrink-0 flex items-center justify-center border-none outline-none bg-transparent ${
                     isAiSettingsOpen ? 'text-stone-950 font-bold' : 'text-stone-600 hover:text-stone-950'
                   }`}

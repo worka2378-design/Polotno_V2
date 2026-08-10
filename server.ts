@@ -30,18 +30,21 @@ function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMsg: string): Pr
 }
 
 function normalizeGeminiModel(model?: string): string {
-  if (!model) return "gemini-3.6-flash";
+  if (!model) return "gemini-2.0-flash";
   const m = model.trim().toLowerCase();
+  if (m.startsWith("gemini-2.") || m.startsWith("gemini-1.")) {
+    return model.trim();
+  }
   if (m.includes("pro")) {
-    return "gemini-3.1-pro-preview";
+    return "gemini-2.5-pro-preview-06-05";
   }
   if (m.includes("lite")) {
-    return "gemini-3.1-flash-lite";
+    return "gemini-2.0-flash-lite";
   }
   if (m.includes("latest")) {
-    return "gemini-flash-latest";
+    return "gemini-2.0-flash";
   }
-  return "gemini-3.6-flash";
+  return "gemini-2.0-flash";
 }
 
 // Helper for Real-time Web Search (Tavily, Serper, or DuckDuckGo fallback)
@@ -342,13 +345,16 @@ async function handleGeminiGeneration(
     if (errStr.includes("API_KEY_INVALID") || errStr.includes("API key not valid")) {
       throw canvasErr;
     }
+    if (errStr.includes("404") || errStr.includes("not found") || errStr.includes("models/")) {
+      throw new Error(`MODEL_NOT_FOUND: Модель не існує в Gemini API. Перевірте назву моделі.`);
+    }
   }
 
-  // Attempt 2: Standard generation with gemini-3.6-flash (timeout 25s)
+  // Attempt 2: Standard generation with gemini-2.0-flash (timeout 25s)
   try {
     const res: any = await withTimeout(
       ai.models.generateContent({
-        model: "gemini-3.6-flash",
+        model: "gemini-2.0-flash",
         contents: formattedContents,
         config: {
           systemInstruction,
@@ -371,11 +377,11 @@ async function handleGeminiGeneration(
     }
   }
 
-  // Attempt 3: Secondary model fallback (gemini-3.1-flash-lite) (timeout 20s)
+  // Attempt 3: Secondary model fallback (gemini-2.0-flash-lite) (timeout 20s)
   try {
     const res: any = await withTimeout(
       ai.models.generateContent({
-        model: "gemini-3.1-flash-lite",
+        model: "gemini-2.0-flash-lite",
         contents: formattedContents,
         config: {
           systemInstruction,
@@ -462,16 +468,14 @@ function extractToolCallsFromText(text: string): { cleanText: string; toolCalls:
 // Health check endpoint with AI readiness status
 app.get("/api/health", (_req, res) => {
   const hasGeminiKey = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 0);
-  const hasDeepSeekKey = Boolean(process.env.DEEPSEEK_API_KEY && process.env.DEEPSEEK_API_KEY.trim().length > 0);
   const hasTavilyKey = Boolean(process.env.TAVILY_API_KEY && process.env.TAVILY_API_KEY.trim().length > 0);
   const hasSerperKey = Boolean(process.env.SERPER_API_KEY && process.env.SERPER_API_KEY.trim().length > 0);
   res.json({
     status: "ok",
     timestamp: Date.now(),
-    aiConfigured: hasGeminiKey || hasDeepSeekKey,
+    aiConfigured: hasGeminiKey,
     hasGeminiKey,
     geminiKeyConfigured: hasGeminiKey,
-    hasDeepSeekKey,
     hasSearchApi: hasTavilyKey || hasSerperKey,
     hasTavilyKey,
     hasSerperKey,
@@ -501,64 +505,19 @@ app.get("/api/search", async (req, res) => {
   }
 });
 
-
-// Endpoint to detect real installed Ollama local models
-app.get("/api/ai/ollama/models", async (req, res) => {
-  const customUrl = (req.query.url as string)?.trim().replace(/\/$/, "");
-  const urlsToTry = Array.from(new Set([
-    customUrl,
-    "http://localhost:11434",
-    "http://127.0.0.1:11434",
-  ])).filter(Boolean) as string[];
-
-  for (const url of urlsToTry) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 2500);
-
-      const ollamaRes = await fetch(`${url}/api/tags`, {
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-
-      if (ollamaRes.ok) {
-        const data = await ollamaRes.json();
-        const models = (data.models || []).map((m: any) => ({
-          name: m.name,
-          size: m.size,
-          modifiedAt: m.modified_at,
-        }));
-        return res.json({ online: true, models, count: models.length, url });
-      }
-    } catch (e) {
-      // Try next URL
-    }
-  }
-
-  return res.json({
-    online: false,
-    models: [],
-    message: "Ollama локально не запущена або недоступна для сервера.",
-  });
-});
-
-// AI Chat API Route
+// AI Chat API Route (Gemini AI Only)
 app.post("/api/ai/chat", async (req, res) => {
   try {
     const {
       messages = [],
-      provider = "gemini",
       geminiApiKey,
-      geminiModel = "gemini-3.6-flash",
-      deepseekApiKey,
-      deepseekModel = "deepseek-chat",
-      ollamaModel = "llama3",
+      geminiModel = "gemini-2.0-flash",
       tavilyApiKey,
       serperApiKey,
       contextData,
     } = req.body;
 
-    let systemInstruction = `Ти — розумний AI асистент з підтримкою прямого керування полотном (Function Calling / Tools API).
+    let systemInstruction = `Ти — розумний AI асистент на базі Google Gemini з підтримкою прямого керування полотном (Function Calling / Tools API).
 
 ТВОЯ РОЛЬ ТА ПРИНЦИПИ ВІДПОВІДІ:
 1. Пряма відповідь без вступів: Завжди відповідай ДИРЕКТНО, чітко, структуровано та розгорнуто на питання користувача. НЕ додавай системних префіксів, вступів на кшталт "Отримано запит: ...", "Я готовий допомогти...".
@@ -600,122 +559,7 @@ app.post("/api/ai/chat", async (req, res) => {
       }
     }
 
-
-    // 1. Try DeepSeek if selected
-    if (provider === "deepseek") {
-      const activeKey = deepseekApiKey?.trim() || process.env.DEEPSEEK_API_KEY?.trim();
-      if (!activeKey) {
-        return res.status(400).json({
-          error: true,
-          reason: "no_api_key",
-          response: "DEEPSEEK_API_KEY не вказано. Вкажіть ключ у налаштуваннях AI або середовищі.",
-        });
-      }
-
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 25000);
-
-        const apiRes = await fetch("https://api.deepseek.com/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${activeKey}`,
-          },
-          signal: controller.signal,
-          body: JSON.stringify({
-            model: deepseekModel || "deepseek-chat",
-            messages: [
-              { role: "system", content: systemInstruction },
-              ...messages.map((m: any) => ({
-                role: m.role === "assistant" ? "assistant" : "user",
-                content: m.content,
-              })),
-            ],
-          }),
-        });
-        clearTimeout(timeout);
-
-        if (apiRes.ok) {
-          const data = await apiRes.json();
-          const reply = data.choices?.[0]?.message?.content;
-          if (reply) {
-            const parsed = extractToolCallsFromText(reply);
-            return res.json({ response: parsed.cleanText || "Дію виконано.", provider: "deepseek", toolCalls: parsed.toolCalls });
-          }
-        } else {
-          const errText = await apiRes.text();
-          console.error("[DeepSeek API Error]:", apiRes.status, errText);
-          let userHint = `Помилка DeepSeek API (HTTP ${apiRes.status}): ${apiRes.statusText}`;
-          if (apiRes.status === 402) {
-            userHint = "На акаунті DeepSeek вичерпано баланс (HTTP 402: Payment Required). Поповніть баланс на платформі DeepSeek або переключіться на Gemini у налаштуваннях AI (⚙️).";
-          }
-          return res.status(apiRes.status).json({
-            error: true,
-            reason: "api_error",
-            response: userHint,
-          });
-        }
-      } catch (dsErr: any) {
-        console.error("[DeepSeek Chat Error]:", dsErr?.message || dsErr);
-        return res.status(500).json({
-          error: true,
-          reason: "network_error",
-          response: `Помилка з'єднання з DeepSeek API: ${dsErr?.message || "Збій мережі"}`,
-        });
-      }
-    }
-
-    // 2. Try Local Ollama if selected
-    if (provider === "local") {
-      const customUrl = req.body.ollamaUrl ? String(req.body.ollamaUrl).trim().replace(/\/$/, "") : "";
-      const urlsToTry = Array.from(new Set([
-        customUrl,
-        "http://localhost:11434",
-        "http://127.0.0.1:11434",
-      ])).filter(Boolean) as string[];
-
-      for (const targetUrl of urlsToTry) {
-        try {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 30000);
-
-          const ollamaRes = await fetch(`${targetUrl}/api/chat`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            signal: controller.signal,
-            body: JSON.stringify({
-              model: ollamaModel || "llama3",
-              stream: false,
-              messages: [
-                { role: "system", content: systemInstruction },
-                ...messages,
-              ],
-            }),
-          });
-          clearTimeout(timeout);
-
-          if (ollamaRes.ok) {
-            const oData = await ollamaRes.json();
-            const reply = oData.message?.content;
-            if (reply) {
-              const parsed = extractToolCallsFromText(reply);
-              return res.json({ response: parsed.cleanText || "Дію виконано.", provider: "local", toolCalls: parsed.toolCalls });
-            }
-          }
-        } catch (e: any) {
-          console.warn(`[Ollama Error on ${targetUrl}]:`, e?.message || e);
-        }
-      }
-
-      return res.status(503).json({
-        error: true,
-        reason: "ollama_offline",
-        response: "⚠️ Локальний AI (Ollama) недоступний на сервері Cloud Run.\n\nОскільки веб-додаток працює через хмару (HTTPS), браузер блокує локальні HTTP-запити до вашого ПК (127.0.0.1:11434).\n\nЯк це виправлено:\n1. У налаштуваннях AI (⚙️) вкажіть тунель ngrok/Cloudflare або замініть провайдера на Gemini.\n2. Якщо запускаєте Ollama на ПК, переконайся, що ввімкнено CORS: `OLLAMA_ORIGINS=* ollama serve`",
-      });
-    }
-
-    // 3. Primary AI: Gemini AI
+    // Primary AI: Google Gemini
     try {
       const { text, toolCalls } = await handleGeminiGeneration(
         messages,
@@ -730,6 +574,13 @@ app.post("/api/ai/chat", async (req, res) => {
       console.error("[Gemini Chat Route Error]:", geminiError?.message || geminiError);
       const errMsg = geminiError?.message || String(geminiError);
 
+      if (errMsg.includes("MODEL_NOT_FOUND")) {
+        return res.status(400).json({
+          error: true,
+          reason: "model_not_found",
+          response: "Помилка: вибрана модель Gemini не існує. Оберіть іншу модель у налаштуваннях AI.",
+        });
+      }
       if (errMsg.includes("NO_API_KEY")) {
         return res.status(400).json({
           error: true,
@@ -764,11 +615,11 @@ app.post("/api/ai/chat", async (req, res) => {
   }
 });
 
-// Endpoint for fast API Key Validation without tool calls or heavy context
+// Endpoint for fast Gemini API Key Validation
 app.post("/api/ai/verify-key", async (req, res) => {
   try {
-    const { provider = "gemini", apiKey, model } = req.body;
-    const activeKey = (apiKey || "").trim() || (provider === "gemini" ? process.env.GEMINI_API_KEY : process.env.DEEPSEEK_API_KEY)?.trim();
+    const { apiKey, model } = req.body;
+    const activeKey = (apiKey || "").trim() || process.env.GEMINI_API_KEY?.trim();
 
     if (!activeKey) {
       return res.status(400).json({
@@ -777,74 +628,43 @@ app.post("/api/ai/verify-key", async (req, res) => {
       });
     }
 
-    if (provider === "gemini") {
-      const ai = new GoogleGenAI({ apiKey: activeKey });
-      const targetModel = normalizeGeminiModel(model);
-      try {
-        const testRes: any = await withTimeout(
-          ai.models.generateContent({
-            model: targetModel,
+    const ai = new GoogleGenAI({ apiKey: activeKey });
+    const targetModel = normalizeGeminiModel(model);
+    try {
+      const testRes: any = await withTimeout(
+        ai.models.generateContent({
+          model: targetModel,
+          contents: [{ role: "user", parts: [{ text: "Привіт" }] }],
+        }),
+        10000,
+        "Таймаут перевірки ключа Gemini"
+      );
+      if (testRes.text) {
+        return res.json({ ok: true, message: `Ключ дійсний (${targetModel})` });
+      }
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      if (msg.includes("API_KEY_INVALID") || msg.includes("API key not valid")) {
+        return res.status(400).json({ ok: false, message: "Недійсний API ключ Gemini (перевірте правильність ключа)." });
+      }
+      if (msg.includes("429") || msg.toLowerCase().includes("quota")) {
+        return res.status(429).json({ ok: false, message: "Перевищено ліміт запитів (Quota exceeded) для цієї моделі або акаунту." });
+      }
+      if (targetModel !== "gemini-2.0-flash") {
+        try {
+          const fallbackRes: any = await ai.models.generateContent({
+            model: "gemini-2.0-flash",
             contents: [{ role: "user", parts: [{ text: "Привіт" }] }],
-          }),
-          10000,
-          "Таймаут перевірки ключа Gemini"
-        );
-        if (testRes.text) {
-          return res.json({ ok: true, message: `Ключ дійсний (${targetModel})` });
-        }
-      } catch (err: any) {
-        const msg = err?.message || String(err);
-        if (msg.includes("API_KEY_INVALID") || msg.includes("API key not valid")) {
-          return res.status(400).json({ ok: false, message: "Недійсний API ключ Gemini (перевірте правильність ключа)." });
-        }
-        if (msg.includes("429") || msg.toLowerCase().includes("quota")) {
-          return res.status(429).json({ ok: false, message: "Перевищено ліміт запитів (Quota exceeded) для цієї моделі або акаунту." });
-        }
-        // If pro model failed with quota or error, attempt fallback check with flash
-        if (targetModel !== "gemini-3.6-flash") {
-          try {
-            const fallbackRes: any = await ai.models.generateContent({
-              model: "gemini-3.6-flash",
-              contents: [{ role: "user", parts: [{ text: "Привіт" }] }],
-            });
-            if (fallbackRes.text) {
-              return res.json({ ok: true, message: "Ключ дійсний (для Gemini 3.6 Flash)" });
-            }
-          } catch (fbErr) {}
-        }
-        return res.status(400).json({ ok: false, message: `Помилка Gemini: ${msg.replace(/^Error:\s*/, "")}` });
-      }
-    } else if (provider === "deepseek") {
-      try {
-        const apiRes = await fetch("https://api.deepseek.com/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${activeKey}`,
-          },
-          body: JSON.stringify({
-            model: model || "deepseek-chat",
-            messages: [{ role: "user", content: "Hi" }],
-            max_tokens: 5,
-          }),
-        });
-        if (apiRes.ok) {
-          return res.json({ ok: true, message: "Ключ DeepSeek дійсний" });
-        } else {
-          if (apiRes.status === 402) {
-            return res.status(402).json({ ok: false, message: "На акаунті DeepSeek вичерпано баланс (HTTP 402)." });
+          });
+          if (fallbackRes.text) {
+            return res.json({ ok: true, message: "Ключ дійсний (для Gemini 2.0 Flash)" });
           }
-          if (apiRes.status === 401) {
-            return res.status(401).json({ ok: false, message: "Недійсний API ключ DeepSeek." });
-          }
-          return res.status(apiRes.status).json({ ok: false, message: `Помилка DeepSeek (HTTP ${apiRes.status})` });
-        }
-      } catch (err: any) {
-        return res.status(500).json({ ok: false, message: `Помилка мережі DeepSeek: ${err?.message}` });
+        } catch (fbErr) {}
       }
+      return res.status(400).json({ ok: false, message: `Помилка Gemini: ${msg.replace(/^Error:\s*/, "")}` });
     }
 
-    return res.status(400).json({ ok: false, message: "Невідомий провайдер." });
+    return res.status(400).json({ ok: false, message: "Не вдалося перевірити ключ Gemini." });
   } catch (e: any) {
     return res.status(500).json({ ok: false, message: e?.message || "Помилка сервера." });
   }
