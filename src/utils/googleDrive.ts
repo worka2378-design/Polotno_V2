@@ -35,9 +35,19 @@ const provider = new GoogleAuthProvider();
 SCOPES.forEach((scope) => provider.addScope(scope));
 
 const TOKEN_STORAGE_KEY = 'gdrive_access_token';
+const TOKEN_TIME_KEY = 'gdrive_access_token_time';
 
 function getStoredAccessToken(): string | null {
   try {
+    const timeStr = localStorage.getItem(TOKEN_TIME_KEY);
+    if (timeStr) {
+      const elapsedMs = Date.now() - parseInt(timeStr, 10);
+      // Google OAuth token expires in 1 hr (3600s). Invalidate if older than 50 minutes.
+      if (elapsedMs > 50 * 60 * 1000) {
+        setStoredAccessToken(null);
+        return null;
+      }
+    }
     return localStorage.getItem(TOKEN_STORAGE_KEY) || sessionStorage.getItem(TOKEN_STORAGE_KEY);
   } catch {
     return null;
@@ -49,9 +59,11 @@ function setStoredAccessToken(token: string | null) {
   try {
     if (token) {
       localStorage.setItem(TOKEN_STORAGE_KEY, token);
+      localStorage.setItem(TOKEN_TIME_KEY, String(Date.now()));
       sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
     } else {
       localStorage.removeItem(TOKEN_STORAGE_KEY);
+      localStorage.removeItem(TOKEN_TIME_KEY);
       sessionStorage.removeItem(TOKEN_STORAGE_KEY);
     }
   } catch {}
@@ -133,9 +145,12 @@ export async function getGoogleDriveToken(): Promise<string> {
   if (typeof (window as any).__getGoogleAuthToken === 'function') {
     try {
       const token = await (window as any).__getGoogleAuthToken(SCOPES);
-      if (token) return token;
+      if (token) {
+        setStoredAccessToken(token);
+        return token;
+      }
     } catch (e) {
-      // Fall through to cachedAccessToken or sign in prompt
+      // Fall through
     }
   }
 
@@ -149,6 +164,63 @@ export async function getGoogleDriveToken(): Promise<string> {
 }
 
 /**
+ * Fetch wrapper with automatic token management and 401 retry refresh handling
+ */
+export async function fetchWithDriveAuth(
+  url: string,
+  options: RequestInit = {}
+): Promise<Response> {
+  let token = await getGoogleDriveToken().catch(() => null);
+
+  if (!token && auth.currentUser) {
+    try {
+      const reAuth = await signInWithGoogleDrive();
+      token = reAuth?.accessToken || null;
+    } catch (e) {}
+  }
+
+  if (!token) {
+    throw new Error('Потрібно увійти через Google акаунт для доступу до Google Drive');
+  }
+
+  const headers = new Headers(options.headers || {});
+  headers.set('Authorization', `Bearer ${token}`);
+
+  let res = await fetch(url, { ...options, headers });
+
+  // Handle 401 Unauthorized (expired token) automatically
+  if (res.status === 401) {
+    setStoredAccessToken(null);
+
+    if (isAIStudioEnvironment()) {
+      try {
+        const freshToken = await (window as any).__getGoogleAuthToken(SCOPES);
+        if (freshToken) {
+          setStoredAccessToken(freshToken);
+          headers.set('Authorization', `Bearer ${freshToken}`);
+          res = await fetch(url, { ...options, headers });
+          if (res.ok) return res;
+        }
+      } catch (e) {}
+    }
+
+    if (auth.currentUser) {
+      try {
+        const reAuthResult = await signInWithGoogleDrive();
+        if (reAuthResult?.accessToken) {
+          headers.set('Authorization', `Bearer ${reAuthResult.accessToken}`);
+          res = await fetch(url, { ...options, headers });
+        }
+      } catch (reAuthErr) {
+        throw new Error('Термін дії токена Google Drive закінчився (1 година). Будь ласка, увійдіть знову через Google.');
+      }
+    }
+  }
+
+  return res;
+}
+
+/**
  * Find existing board backup file in Google Drive
  */
 export async function findDriveBackup(): Promise<DriveBackupInfo | null> {
@@ -157,13 +229,9 @@ export async function findDriveBackup(): Promise<DriveBackupInfo | null> {
     if (!isAIStudioEnvironment() && !tokenCandidate) {
       return null;
     }
-    const token = await getGoogleDriveToken();
     const q = encodeURIComponent("name = 'canvas_board_backup.json' and trashed = false");
-    const res = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime,webViewLink)`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      }
+    const res = await fetchWithDriveAuth(
+      `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime,webViewLink)`
     );
     if (!res.ok) return null;
     const data = await res.json();
@@ -190,8 +258,6 @@ export async function saveBoardToDrive(
   boardData: any,
   existingFileId?: string
 ): Promise<DriveBackupInfo> {
-  const token = await getGoogleDriveToken();
-
   let targetFileId = existingFileId;
   if (!targetFileId) {
     const existing = await findDriveBackup();
@@ -202,12 +268,11 @@ export async function saveBoardToDrive(
 
   if (targetFileId) {
     // Update existing backup file
-    const res = await fetch(
+    const res = await fetchWithDriveAuth(
       `https://www.googleapis.com/upload/drive/v3/files/${targetFileId}?uploadType=media&fields=id,name,modifiedTime,webViewLink`,
       {
         method: 'PATCH',
         headers: {
-          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(boardData),
@@ -245,12 +310,11 @@ export async function saveBoardToDrive(
       JSON.stringify(boardData) +
       close_delim;
 
-    const res = await fetch(
+    const res = await fetchWithDriveAuth(
       'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,modifiedTime,webViewLink',
       {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${token}`,
           'Content-Type': `multipart/related; boundary="${boundary}"`,
         },
         body: body,
@@ -276,8 +340,6 @@ export async function saveBoardToDrive(
  * Load board backup content from Google Drive
  */
 export async function loadBoardFromDrive(fileId?: string): Promise<any> {
-  const token = await getGoogleDriveToken();
-
   let targetId = fileId;
   if (!targetId) {
     const existing = await findDriveBackup();
@@ -287,11 +349,8 @@ export async function loadBoardFromDrive(fileId?: string): Promise<any> {
     targetId = existing.fileId;
   }
 
-  const res = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${targetId}?alt=media`,
-    {
-      headers: { Authorization: `Bearer ${token}` },
-    }
+  const res = await fetchWithDriveAuth(
+    `https://www.googleapis.com/drive/v3/files/${targetId}?alt=media`
   );
 
   if (!res.ok) {
@@ -309,8 +368,6 @@ export async function listDriveFiles(
   searchQuery: string = '',
   categoryFilter: string = 'all'
 ): Promise<DriveFileItem[]> {
-  const token = await getGoogleDriveToken();
-
   let q = 'trashed = false';
 
   if (categoryFilter === 'documents') {
@@ -327,11 +384,8 @@ export async function listDriveFiles(
   }
 
   const encodedQ = encodeURIComponent(q);
-  const res = await fetch(
-    `https://www.googleapis.com/drive/v3/files?pageSize=40&q=${encodedQ}&fields=files(id,name,mimeType,thumbnailLink,webViewLink,iconLink,size,modifiedTime)&orderBy=modifiedTime desc`,
-    {
-      headers: { Authorization: `Bearer ${token}` },
-    }
+  const res = await fetchWithDriveAuth(
+    `https://www.googleapis.com/drive/v3/files?pageSize=40&q=${encodedQ}&fields=files(id,name,mimeType,thumbnailLink,webViewLink,iconLink,size,modifiedTime)&orderBy=modifiedTime desc`
   );
 
   if (!res.ok) {
@@ -347,7 +401,6 @@ export async function listDriveFiles(
  * Upload a local File to Google Drive
  */
 export async function uploadFileToDrive(file: File): Promise<DriveFileItem> {
-  const token = await getGoogleDriveToken();
   const metadata = {
     name: file.name,
     mimeType: file.type || 'application/octet-stream',
@@ -357,13 +410,10 @@ export async function uploadFileToDrive(file: File): Promise<DriveFileItem> {
   formData.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
   formData.append('file', file);
 
-  const res = await fetch(
+  const res = await fetchWithDriveAuth(
     'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,thumbnailLink,webViewLink,iconLink,size,modifiedTime',
     {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
       body: formData,
     }
   );

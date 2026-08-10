@@ -2950,41 +2950,24 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
                   </div>
                 )}
 
-                {/* Quick Prompts Suggestions if few messages */}
-                {aiMessages.length <= 1 && !isAiLoading && (
-                  <div className="space-y-1.5 py-1 select-none">
-                    <div className="text-[10px] font-semibold text-stone-500 uppercase tracking-wider px-1">
-                      Швидкі підказки:
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
+                {/* API Key missing notice if running outside AI Studio without server key or custom key */}
+                {!geminiApiKey && !serverAiStatus.hasGeminiKey && !deepseekApiKey && !serverAiStatus.hasDeepSeekKey && (
+                  <div className="bg-amber-50 border border-amber-200/80 p-2.5 rounded-2xl text-[11px] text-amber-900 space-y-1.5 select-none">
+                    <div className="flex items-center justify-between font-semibold">
+                      <span className="flex items-center gap-1">
+                        <Key className="w-3.5 h-3.5 text-amber-700" />
+                        <span>Потрібен API ключ</span>
+                      </span>
                       <button
-                        onClick={() => {
-                          setAiInputText("Проаналізуй усі мої нотатки та зроби коротке резюме.");
-                        }}
-                        className="text-[10.5px] font-medium text-stone-800 bg-[#efe9dd] hover:bg-[#e2d8c7] border border-stone-300 px-2.5 py-1 rounded-full flex items-center gap-1 transition-all cursor-pointer shadow-2xs hover:border-stone-400"
+                        onClick={() => setIsAiSettingsOpen(true)}
+                        className="text-[10px] bg-amber-200/80 hover:bg-amber-300/80 text-amber-950 px-2.5 py-0.5 rounded-full transition-colors cursor-pointer font-medium"
                       >
-                        <Sparkles className="w-3 h-3 text-stone-600" />
-                        <span>Підсумок полотна</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setAiInputText("Запропонуй 3 нові ідеї на основі обраного матеріалу.");
-                        }}
-                        className="text-[10.5px] font-medium text-stone-800 bg-[#efe9dd] hover:bg-[#e2d8c7] border border-stone-300 px-2.5 py-1 rounded-full flex items-center gap-1 transition-all cursor-pointer shadow-2xs hover:border-stone-400"
-                      >
-                        <Bot className="w-3 h-3 text-stone-600" />
-                        <span>Згенерувати ідеї</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setAiInputText("Створи чіткий план дій з пріоритетами.");
-                        }}
-                        className="text-[10.5px] font-medium text-stone-800 bg-[#efe9dd] hover:bg-[#e2d8c7] border border-stone-300 px-2.5 py-1 rounded-full flex items-center gap-1 transition-all cursor-pointer shadow-2xs hover:border-stone-400"
-                      >
-                        <Check className="w-3 h-3 text-stone-600" />
-                        <span>План дій</span>
+                        Налаштувати ⚙️
                       </button>
                     </div>
+                    <p className="text-[10.5px] leading-snug text-amber-800">
+                      Для використання AI введіть ваш безкоштовний ключ Gemini чи DeepSeek у налаштуваннях AI.
+                    </p>
                   </div>
                 )}
 

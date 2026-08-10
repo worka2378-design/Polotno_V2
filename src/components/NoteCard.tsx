@@ -378,21 +378,54 @@ export const NoteCard: React.FC<NoteCardProps> = React.memo(({
 
   const handleEditorPaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
     if (note.locked) return;
+    const pasteHtml = e.clipboardData.getData('text/html');
     const pasteText = e.clipboardData.getData('text/plain');
-    if (!pasteText) return;
 
-    if (isUrl(pasteText)) {
+    if (!pasteHtml && !pasteText) return;
+
+    // Case 1: Pure single URL -> convert to graphical link card
+    if (pasteText && isUrl(pasteText.trim())) {
       e.preventDefault();
-      const linkCardHtml = createLinkCardHtml(pasteText);
+      const linkCardHtml = createLinkCardHtml(pasteText.trim());
       document.execCommand('insertHTML', false, linkCardHtml + '&nbsp;');
       handleInput();
       onUpdateEnd?.();
-    } else if (/(https?:\/\/|www\.)/i.test(pasteText)) {
+      return;
+    }
+
+    // Case 2: Formatted HTML in clipboard (from webpage, docs, etc.) -> preserve formatting
+    if (pasteHtml && pasteHtml.trim().length > 0) {
       e.preventDefault();
-      const formattedHtml = convertTextUrlsToLinkCards(pasteText.replace(/\n/g, '<br/>'));
-      document.execCommand('insertHTML', false, formattedHtml);
+      // Clean up metadata/script wrappers from pasted HTML while preserving styling, bold, italic, headings, lists, tables, links
+      let cleaned = pasteHtml
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .replace(/<meta[^>]*>/gi, '')
+        .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/<script[\s\S]*?<\/script>/gi, '')
+        .replace(/<xml[\s\S]*?<\/xml>/gi, '')
+        .replace(/<\/?(?:html|head|body)[^>]*>/gi, '');
+
+      cleaned = convertTextUrlsToLinkCards(cleaned);
+
+      if (cleaned.trim().length > 0) {
+        document.execCommand('insertHTML', false, cleaned);
+      } else if (pasteText) {
+        const formattedText = convertTextUrlsToLinkCards(escapeHtml(pasteText).replace(/\r\n|\r|\n/g, '<br/>'));
+        document.execCommand('insertHTML', false, formattedText);
+      }
       handleInput();
       onUpdateEnd?.();
+      return;
+    }
+
+    // Case 3: Plain text with newlines or embedded URLs -> preserve lines & convert URLs
+    if (pasteText) {
+      e.preventDefault();
+      const formattedText = convertTextUrlsToLinkCards(escapeHtml(pasteText).replace(/\r\n|\r|\n/g, '<br/>'));
+      document.execCommand('insertHTML', false, formattedText);
+      handleInput();
+      onUpdateEnd?.();
+      return;
     }
   };
 
