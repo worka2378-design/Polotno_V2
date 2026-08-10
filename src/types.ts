@@ -121,6 +121,18 @@ export interface VaultEncryptedData {
   data: string;
 }
 
+export interface NoteConnection {
+  id: string;
+  fromNoteId: string;
+  toNoteId: string;
+  label?: string;
+  cp1?: Point;
+  cp2?: Point;
+  style?: 'solid' | 'dashed' | 'dotted';
+  color?: string;
+  createdAt: number;
+}
+
 export interface VaultPayload {
   version: number;
   notes: Note[];

@@ -1,13 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   Download, X, Pin,
-  Music, Video, FileText, File, Plus
+  Music, Video, FileText, File, Plus, Tag, Sparkles
 } from 'lucide-react';
 import { Note } from '../types';
 import { NOTE_COLOR_CLASSES, FONT_CLASSES, FONT_SIZE_CLASSES, FONT_FAMILY_STYLES } from '../utils/theme';
 import { deleteAttachmentData } from '../utils/attachmentStorage';
 import { isUrl, createLinkCardHtml, convertTextUrlsToLinkCards, ensureLinkCardsUpToDate, escapeHtml } from '../utils/linkUtils';
 import { convertMarkdownToHtml } from '../utils/markdownUtils';
+import { generateAutoTagsForNote } from '../utils/tagUtils';
 
 interface NoteCardProps {
   note: Note;
@@ -49,6 +50,57 @@ export const NoteCard: React.FC<NoteCardProps> = React.memo(({
     selectedIndex: number;
   } | null>(null);
 
+  // Tags Editing & Generation State
+  const [isAddingTag, setIsAddingTag] = useState(false);
+  const [newTagInput, setNewTagInput] = useState('');
+  const [editingTagIndex, setEditingTagIndex] = useState<number | null>(null);
+  const [editingTagValue, setEditingTagValue] = useState('');
+
+  const handleAutoGenerateTags = () => {
+    const currentContent = editorRef.current ? editorRef.current.innerHTML : note.content;
+    const newTags = generateAutoTagsForNote(currentContent, note.title, note.tags || []);
+    onUpdate(note.id, { tags: newTags });
+    onUpdateEnd?.();
+  };
+
+  const handleRemoveTag = (tagToRemove: string) => {
+    const updatedTags = (note.tags || []).filter(
+      (t) => t.toLowerCase() !== tagToRemove.toLowerCase()
+    );
+    onUpdate(note.id, { tags: updatedTags });
+    onUpdateEnd?.();
+  };
+
+  const handleAddTagSubmit = () => {
+    const clean = newTagInput.trim().replace(/^#+/, '').replace(/[^a-zA-Z0-9а-яА-ЯєєііїїґҐ_]/g, '');
+    if (clean) {
+      const existing = note.tags || [];
+      if (!existing.some((t) => t.toLowerCase() === clean.toLowerCase())) {
+        const updated = [...existing, clean.toLowerCase()];
+        onUpdate(note.id, { tags: updated });
+        onUpdateEnd?.();
+      }
+    }
+    setNewTagInput('');
+    setIsAddingTag(false);
+  };
+
+  const handleSaveEditTag = (index: number) => {
+    const clean = editingTagValue.trim().replace(/^#+/, '').replace(/[^a-zA-Z0-9а-яА-ЯєєііїїґҐ_]/g, '');
+    const currentTags = [...(note.tags || [])];
+    if (clean) {
+      currentTags[index] = clean.toLowerCase();
+      onUpdate(note.id, { tags: currentTags });
+      onUpdateEnd?.();
+    } else {
+      currentTags.splice(index, 1);
+      onUpdate(note.id, { tags: currentTags });
+      onUpdateEnd?.();
+    }
+    setEditingTagIndex(null);
+    setEditingTagValue('');
+  };
+
   const colorStyle = NOTE_COLOR_CLASSES[note.color] || NOTE_COLOR_CLASSES.white;
 
   // Sync initial content or external changes ONLY when not focused
@@ -60,6 +112,44 @@ export const NoteCard: React.FC<NoteCardProps> = React.memo(({
       }
     }
   }, [note.id, note.content]);
+
+  // Auto-fit note height to content
+  useEffect(() => {
+    if (!cardRef.current) return;
+    const cardEl = cardRef.current;
+
+    const syncHeight = () => {
+      if (!cardEl) return;
+      const actualHeight = Math.max(120, cardEl.scrollHeight);
+      if (Math.abs(actualHeight - (note.height || 0)) > 3) {
+        onUpdate(note.id, { height: actualHeight }, true);
+      }
+    };
+
+    syncHeight();
+
+    const observer = new ResizeObserver(() => {
+      syncHeight();
+    });
+
+    observer.observe(cardEl);
+    if (editorRef.current) {
+      observer.observe(editorRef.current);
+    }
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [
+    note.id,
+    note.content,
+    note.title,
+    note.fontSize,
+    note.fontFamily,
+    note.tags?.length,
+    note.attachments?.length,
+    note.width,
+  ]);
 
   // Global listener to capture selection changes in real-time
   useEffect(() => {
@@ -717,7 +807,8 @@ export const NoteCard: React.FC<NoteCardProps> = React.memo(({
       style={{
         transform: `translate(${note.x}px, ${note.y}px)`,
         width: `${note.width}px`,
-        height: `${note.height}px`,
+        minHeight: `${note.height || 120}px`,
+        height: 'fit-content',
         zIndex: isSelected ? 100 : note.zIndex,
       }}
       className={`absolute top-0 left-0 flex flex-col rounded-2xl border select-none group transition-[border-color,background-color] duration-150 cursor-default ${
@@ -774,7 +865,7 @@ export const NoteCard: React.FC<NoteCardProps> = React.memo(({
 
       {/* Editor Content Area / File Canvas Display */}
       <div 
-        className="flex-1 overflow-y-auto px-4 py-3 select-text flex flex-col gap-2 scrollbar-thin h-full justify-start cursor-text"
+        className="flex-1 min-h-0 overflow-y-auto px-4 pt-2 pb-2 select-text flex flex-col gap-2 scrollbar-thin cursor-text"
         onPointerDown={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
         onWheel={(e) => {
@@ -798,6 +889,13 @@ export const NoteCard: React.FC<NoteCardProps> = React.memo(({
                 isFocusedRef.current = false;
                 processRawUrlsInEditor();
                 handleInput();
+                const currentText = editorRef.current ? editorRef.current.innerHTML : '';
+                if (currentText && (currentText.includes('#') || !note.tags || note.tags.length === 0)) {
+                  const autoTags = generateAutoTagsForNote(currentText, note.title, note.tags || []);
+                  if (autoTags.length > 0 && JSON.stringify(autoTags) !== JSON.stringify(note.tags || [])) {
+                    onUpdate(note.id, { tags: autoTags });
+                  }
+                }
                 onUpdateEnd?.();
               }}
               onClick={handleEditorClick}
@@ -820,7 +918,7 @@ export const NoteCard: React.FC<NoteCardProps> = React.memo(({
                 e.preventDefault();
               }}
               onKeyDown={handleEditorKeyDown}
-              className={`outline-none min-h-[60px] w-full break-words text-slate-800 cursor-text select-text ${
+              className={`outline-none min-h-[50px] w-full break-words text-slate-800 cursor-text select-text ${
                 FONT_CLASSES[note.fontFamily]
               } ${FONT_SIZE_CLASSES[note.fontSize]}`}
               style={{ 
@@ -982,6 +1080,96 @@ export const NoteCard: React.FC<NoteCardProps> = React.memo(({
             })}
           </div>
         )}
+      </div>
+
+      {/* Note Tags Bar - Docked at bottom of card */}
+      <div
+        className="shrink-0 px-3.5 py-1.5 border-t border-black/10 flex flex-wrap items-center gap-1.5 text-[11px] select-none pr-6 bg-black/[0.02]"
+        onPointerDown={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        {(note.tags || []).map((tag, idx) => {
+          if (editingTagIndex === idx) {
+            return (
+              <input
+                key={idx}
+                type="text"
+                value={editingTagValue}
+                onChange={(e) => setEditingTagValue(e.target.value)}
+                onBlur={() => handleSaveEditTag(idx)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSaveEditTag(idx);
+                  if (e.key === 'Escape') setEditingTagIndex(null);
+                }}
+                autoFocus
+                className="bg-stone-100 text-stone-900 border border-stone-400 rounded-full px-2 py-0.5 text-[10px] font-mono outline-none w-20"
+              />
+            );
+          }
+
+          return (
+            <span
+              key={`${tag}_${idx}`}
+              className="inline-flex items-center gap-1 bg-black/10 hover:bg-black/15 text-stone-800 font-mono text-[10px] px-2 py-0.5 rounded-full transition-colors group/tag cursor-pointer"
+              onClick={() => {
+                setEditingTagIndex(idx);
+                setEditingTagValue(tag);
+              }}
+              title="Натисніть для редагування"
+            >
+              <span>#{tag}</span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleRemoveTag(tag);
+                }}
+                className="text-stone-400 hover:text-stone-900 transition-colors p-0.5 rounded-full"
+                title="Видалити тег"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          );
+        })}
+
+        {/* Input for adding new manual tag */}
+        {isAddingTag ? (
+          <input
+            type="text"
+            placeholder="новий тег..."
+            value={newTagInput}
+            onChange={(e) => setNewTagInput(e.target.value)}
+            onBlur={handleAddTagSubmit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleAddTagSubmit();
+              if (e.key === 'Escape') setIsAddingTag(false);
+            }}
+            autoFocus
+            className="bg-stone-100 text-stone-900 border border-stone-400 rounded-full px-2 py-0.5 text-[10px] font-mono outline-none w-24"
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setIsAddingTag(true)}
+            className="inline-flex items-center gap-1 text-[10px] font-medium text-stone-600 hover:text-stone-900 transition-colors px-2 py-0.5 rounded-full border border-dashed border-stone-400/60 hover:border-stone-600 cursor-pointer"
+            title="Додати новий тег"
+          >
+            <Plus className="w-3 h-3" />
+            <span>Тег</span>
+          </button>
+        )}
+
+        {/* Auto-generate tags button */}
+        <button
+          type="button"
+          onClick={handleAutoGenerateTags}
+          className="inline-flex items-center gap-1 text-[10px] font-medium text-stone-600 hover:text-stone-900 transition-colors px-2 py-0.5 rounded-full border border-stone-300 hover:border-stone-500 cursor-pointer ml-auto"
+          title="Автоматично витягти теги з ключових слів нотатки"
+        >
+          <Sparkles className="w-3 h-3 text-stone-600" />
+          <span>Авто-теги</span>
+        </button>
       </div>
 
       {/* Resize handle bottom right */}

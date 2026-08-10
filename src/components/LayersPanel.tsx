@@ -8,7 +8,7 @@ import {
   Folder as FolderIcon, FolderOpen, FolderPlus, ChevronRight, ChevronDown, FolderOutput,
   LayoutGrid, Tag, Cloud, Link2, Plus, ExternalLink, MousePointer2, Layers, Film, Download, Paperclip, LayoutTemplate,
   ZoomIn, ZoomOut, Maximize2, Map, Bot, Sparkles, Send, RotateCcw, Loader2, Cpu,
-  Settings, Key, RefreshCw, Check, SlidersHorizontal, Shield, Globe
+  Settings, Key, RefreshCw, Check, SlidersHorizontal, Shield, Globe, GitCommit, Share2, Workflow
 } from 'lucide-react';
 
 // Provider Brand Mark Logos
@@ -28,7 +28,7 @@ const GeminiLogo = ({ className = "w-4 h-4" }: { className?: string }) => (
     </defs>
   </svg>
 );
-import { Note, Point, Folder, StandaloneLink, LinkFolder, LinkMetadata, StandaloneFile, FileFolder, FileMetadata, AIChatMessage, AIProvider } from '../types';
+import { Note, Point, Folder, StandaloneLink, LinkFolder, LinkMetadata, StandaloneFile, FileFolder, FileMetadata, AIChatMessage, AIProvider, NoteConnection } from '../types';
 import { COLOR_PALETTE_ITEMS } from '../utils/theme';
 import { countLinksInContent, extractLinksFromContent } from '../utils/linkUtils';
 
@@ -108,9 +108,14 @@ interface LayersPanelProps {
   // Layer Reordering
   onReorderLayer: (sourceId: string, sourceType: 'note', targetId: string, targetType: 'note') => void;
 
+  // Inter-note Connections
+  connections?: NoteConnection[];
+  onDeleteConnection?: (id: string) => void;
+  onStartConnectNote?: (fromNoteId: string) => void;
+
   // Active Tab
-  activeTab?: 'layers' | 'links' | 'files' | 'search' | 'ai';
-  onChangeTab?: (tab: 'layers' | 'links' | 'files' | 'search' | 'ai') => void;
+  activeTab?: 'layers' | 'links' | 'files' | 'connections' | 'search' | 'ai';
+  onChangeTab?: (tab: 'layers' | 'links' | 'files' | 'connections' | 'search' | 'ai') => void;
   onCreateNoteFromAI?: (title: string, content: string) => void;
   onExecuteAiToolCall?: (toolCall: { name: string; args: any }) => void;
 

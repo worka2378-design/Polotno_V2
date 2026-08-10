@@ -211,7 +211,6 @@ export const GoogleDriveModal: React.FC<GoogleDriveModalProps> = ({
     } catch (err: any) {
       const formatted = formatAuthError(err);
       setLoginError(formatted);
-      setBackupError(formatted);
     } finally {
       setIsLoggingIn(false);
     }
@@ -350,8 +349,8 @@ export const GoogleDriveModal: React.FC<GoogleDriveModalProps> = ({
                 <Cloud className="w-4 h-4 shrink-0" />
               </div>
               <div>
-                <h3 className="text-base font-semibold text-stone-900">Google Сервіси</h3>
-                <p className="text-xs text-stone-600">Google Drive та Календар</p>
+                <h3 className="text-base font-semibold text-stone-900">Синхронізація та Резервне копіювання</h3>
+                <p className="text-xs text-stone-600">Google Drive, Календар, ПК та бекапи</p>
               </div>
             </div>
             <button
@@ -493,7 +492,7 @@ export const GoogleDriveModal: React.FC<GoogleDriveModalProps> = ({
                 </div>
               )}
 
-              {backupError && (
+              {backupError && backupError !== loginError && (
                 <div className="flex items-center gap-2 py-1 text-xs text-stone-600">
                   <AlertCircle className="w-4 h-4 text-stone-600 shrink-0" />
                   <span>{backupError}</span>
