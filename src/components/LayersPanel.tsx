@@ -292,7 +292,10 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
           `https://generativelanguage.googleapis.com/v1beta/models/${testModel}:generateContent?key=${keyToTest}`,
           {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': keyToTest,
+            },
             body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Hi' }] }] }),
           }
         );
@@ -334,27 +337,32 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ apiKey: keyToTest, model: geminiModel }),
       });
-      const data = await res.json();
-      if (res.ok && data.ok) {
-        setKeyTestState({
-          testing: false,
-          status: 'success',
-          message: data.message || 'Ключ дійсний ✓',
-        });
-      } else {
-        setKeyTestState({
-          testing: false,
-          status: 'error',
-          message: data.message || 'Ключ недійсний.',
-        });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data.ok) {
+          setKeyTestState({
+            testing: false,
+            status: 'success',
+            message: data.message || 'Ключ дійсний ✓',
+          });
+          return;
+        } else {
+          setKeyTestState({
+            testing: false,
+            status: 'error',
+            message: data.message || 'Ключ недійсний.',
+          });
+          return;
+        }
       }
-    } catch (e: any) {
-      setKeyTestState({
-        testing: false,
-        status: 'error',
-        message: 'Не вдалося перевірити ключ. Перевірте підключення до Інтернету або правильність ключа.',
-      });
-    }
+    } catch (e: any) {}
+
+    setKeyTestState({
+      testing: false,
+      status: 'error',
+      message: 'Не вдалося перевірити ключ. Перевірте правильність ключа та підключення до мережі.',
+    });
   };
 
   const [serverAiStatus, setServerAiStatus] = useState<{
@@ -529,7 +537,10 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
               `https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent?key=${apiKey}`,
               {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                  'Content-Type': 'application/json',
+                  'x-goog-api-key': apiKey,
+                },
                 body: JSON.stringify(reqBody),
               }
             );
