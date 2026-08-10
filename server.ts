@@ -2,7 +2,7 @@ import express from "express";
 import path from "path";
 import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 
 dotenv.config({ path: [".env.local", ".env"] });
 
@@ -30,21 +30,77 @@ function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMsg: string): Pr
 }
 
 function normalizeGeminiModel(model?: string): string {
-  if (!model) return "gemini-2.0-flash";
-  const m = model.trim().toLowerCase();
-  if (m.startsWith("gemini-2.") || m.startsWith("gemini-1.")) {
-    return model.trim();
+  if (!model) return "gemini-3.6-flash";
+  let m = model.trim().replace(/^models\//, "");
+  if (!m) return "gemini-3.6-flash";
+
+  const valid = [
+    "gemini-3.6-flash",
+    "gemini-2.5-flash",
+    "gemini-1.5-flash",
+    "gemini-2.0-flash",
+    "gemini-3.1-pro-preview",
+    "gemini-2.5-pro-preview-06-05",
+    "gemini-2.0-flash-lite",
+    "gemini-3.1-flash-lite",
+  ];
+  if (valid.includes(m)) return m;
+
+  const lower = m.toLowerCase();
+  if (lower.includes("3.6-flash") || lower.includes("3.6")) return "gemini-3.6-flash";
+  if (lower.includes("2.5-flash")) return "gemini-2.5-flash";
+  if (lower.includes("1.5-flash")) return "gemini-1.5-flash";
+  if (lower.includes("2.0-flash")) return "gemini-2.0-flash";
+  if (lower.includes("3.1-pro") || lower.includes("pro")) return "gemini-3.1-pro-preview";
+  if (lower.includes("lite")) return "gemini-2.0-flash-lite";
+
+  return "gemini-3.6-flash";
+}
+
+function sanitizeGeminiContents(messages: any[]): Array<{ role: "user" | "model"; parts: Array<{ text: string }> }> {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return [{ role: "user", parts: [{ text: "Привіт" }] }];
   }
-  if (m.includes("pro")) {
-    return "gemini-2.5-pro-preview-06-05";
+
+  const rawList: Array<{ role: "user" | "model"; text: string }> = [];
+
+  for (const msg of messages) {
+    if (!msg) continue;
+    const rawRole = (msg.role || "").toLowerCase();
+    const role: "user" | "model" = (rawRole === "assistant" || rawRole === "model") ? "model" : "user";
+    
+    let text = typeof msg.content === "string" ? msg.content.trim() : "";
+    if (!text && Array.isArray(msg.parts)) {
+      text = msg.parts.map((p: any) => p?.text || "").join("\n").trim();
+    }
+
+    if (!text) continue;
+    rawList.push({ role, text });
   }
-  if (m.includes("lite")) {
-    return "gemini-2.0-flash-lite";
+
+  if (rawList.length === 0) {
+    return [{ role: "user", parts: [{ text: "Привіт" }] }];
   }
-  if (m.includes("latest")) {
-    return "gemini-2.0-flash";
+
+  const merged: Array<{ role: "user" | "model"; parts: Array<{ text: string }> }> = [];
+
+  for (const item of rawList) {
+    if (merged.length === 0) {
+      if (item.role === "model") {
+        merged.push({ role: "user", parts: [{ text: "Привіт" }] });
+      }
+      merged.push({ role: item.role, parts: [{ text: item.text }] });
+    } else {
+      const last = merged[merged.length - 1];
+      if (last.role === item.role) {
+        last.parts[0].text += "\n\n" + item.text;
+      } else {
+        merged.push({ role: item.role, parts: [{ text: item.text }] });
+      }
+    }
   }
-  return "gemini-2.0-flash";
+
+  return merged;
 }
 
 // Helper for Real-time Web Search (Tavily, Serper, or DuckDuckGo fallback)
@@ -170,15 +226,7 @@ async function handleGeminiGeneration(
     },
   });
 
-  const formattedContents = messages.map((m: { role: string; content: string }) => ({
-    role: m.role === "assistant" ? "model" : "user",
-    parts: [{ text: m.content }],
-  }));
-
-  if (formattedContents.length === 0) {
-    formattedContents.push({ role: "user", parts: [{ text: "Привіт!" }] });
-  }
-
+  const formattedContents = sanitizeGeminiContents(messages);
   const primaryModel = normalizeGeminiModel(preferredModel);
 
   const canvasTools = [
@@ -188,26 +236,26 @@ async function handleGeminiGeneration(
           name: "web_search",
           description: "Пошук актуальної інформації в мережі Інтернет (погода, новини, курси валют, свіжі події)",
           parameters: {
-            type: "OBJECT",
+            type: Type.OBJECT,
             properties: {
-              query: { type: "STRING", description: "Пошуковий запит для пошуку в інтернеті" },
+              query: { type: Type.STRING, description: "Пошуковий запит для пошуку в інтернеті" },
             },
             required: ["query"],
           },
         },
         {
           name: "create_swot_analysis",
-          description: "Створити графічний виджет SWOT-аналізу (Strengths, Weaknesses, Opportunities, Threats) на полотні у вказаних координатах",
+          description: "Створити графічний виджет SWOT-аналізу на полотні",
           parameters: {
-            type: "OBJECT",
+            type: Type.OBJECT,
             properties: {
-              projectTitle: { type: "STRING", description: "Назва проєкту або теми SWOT-аналізу" },
-              strengths: { type: "ARRAY", items: { type: "STRING" }, description: "Сильні сторони (Strengths)" },
-              weaknesses: { type: "ARRAY", items: { type: "STRING" }, description: "Слабкі сторони (Weaknesses)" },
-              opportunities: { type: "ARRAY", items: { type: "STRING" }, description: "Можливості (Opportunities)" },
-              threats: { type: "ARRAY", items: { type: "STRING" }, description: "Загрози (Threats)" },
-              x: { type: "NUMBER", description: "X координата на полотні (необов'язково)" },
-              y: { type: "NUMBER", description: "Y координата на полотні (необов'язково)" },
+              projectTitle: { type: Type.STRING, description: "Назва проєкту або теми SWOT-аналізу" },
+              strengths: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Сильні сторони" },
+              weaknesses: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Слабкі сторони" },
+              opportunities: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Можливості" },
+              threats: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Загрози" },
+              x: { type: Type.NUMBER, description: "X координата на полотні" },
+              y: { type: Type.NUMBER, description: "Y координата на полотні" },
             },
             required: ["projectTitle", "strengths", "weaknesses", "opportunities", "threats"],
           },
@@ -216,15 +264,15 @@ async function handleGeminiGeneration(
           name: "create_note",
           description: "Створити нотатку або текстову картку на полотні",
           parameters: {
-            type: "OBJECT",
+            type: Type.OBJECT,
             properties: {
-              title: { type: "STRING", description: "Заголовок нотатки" },
-              content: { type: "STRING", description: "Зміст нотатки" },
-              color: { type: "STRING", description: "Колір: white, cream, sage, sky, rose, lavender, slate" },
-              x: { type: "NUMBER" },
-              y: { type: "NUMBER" },
-              width: { type: "NUMBER" },
-              height: { type: "NUMBER" },
+              title: { type: Type.STRING, description: "Заголовок нотатки" },
+              content: { type: Type.STRING, description: "Зміст нотатки" },
+              color: { type: Type.STRING, description: "Колір: white, cream, sage, sky, rose, lavender, slate" },
+              x: { type: Type.NUMBER },
+              y: { type: Type.NUMBER },
+              width: { type: Type.NUMBER },
+              height: { type: Type.NUMBER },
             },
             required: ["content"],
           },
@@ -233,35 +281,35 @@ async function handleGeminiGeneration(
           name: "create_planner",
           description: "Створити інтерактивний планувальник або чекліст завдань на полотні",
           parameters: {
-            type: "OBJECT",
+            type: Type.OBJECT,
             properties: {
-              title: { type: "STRING", description: "Заголовок планувальника" },
+              title: { type: Type.STRING, description: "Заголовок планувальника" },
               tasks: {
-                type: "ARRAY",
+                type: Type.ARRAY,
                 items: {
-                  type: "OBJECT",
+                  type: Type.OBJECT,
                   properties: {
-                    text: { type: "STRING" },
-                    completed: { type: "BOOLEAN" },
+                    text: { type: Type.STRING },
+                    completed: { type: Type.BOOLEAN },
                   },
                   required: ["text"],
                 },
               },
-              x: { type: "NUMBER" },
-              y: { type: "NUMBER" },
+              x: { type: Type.NUMBER },
+              y: { type: Type.NUMBER },
             },
             required: ["title", "tasks"],
           },
         },
         {
           name: "create_folder",
-          description: "Створити папки / секції для нотаток на полотні",
+          description: "Створити папку для нотаток на полотні",
           parameters: {
-            type: "OBJECT",
+            type: Type.OBJECT,
             properties: {
-              name: { type: "STRING", description: "Назва папки" },
-              x: { type: "NUMBER" },
-              y: { type: "NUMBER" },
+              name: { type: Type.STRING, description: "Назва папки" },
+              x: { type: Type.NUMBER },
+              y: { type: Type.NUMBER },
             },
             required: ["name"],
           },
@@ -345,63 +393,50 @@ async function handleGeminiGeneration(
     if (errStr.includes("API_KEY_INVALID") || errStr.includes("API key not valid")) {
       throw canvasErr;
     }
-    if (errStr.includes("404") || errStr.includes("not found") || errStr.includes("models/")) {
+    if (errStr.includes("404") || errStr.includes("not found")) {
       throw new Error(`MODEL_NOT_FOUND: Модель не існує в Gemini API. Перевірте назву моделі.`);
     }
   }
 
-  // Attempt 2: Standard generation with gemini-2.0-flash (timeout 25s)
-  try {
-    const res: any = await withTimeout(
-      ai.models.generateContent({
-        model: "gemini-2.0-flash",
-        contents: formattedContents,
-        config: {
-          systemInstruction,
-          temperature: 0.7,
-        },
-      }),
-      25000,
-      "Запит без пошуку перевищив таймаут"
-    );
+  // Attempt 2: Fallback generation without function declarations across candidate models
+  const candidateModels = Array.from(new Set([
+    primaryModel,
+    "gemini-3.6-flash",
+    "gemini-2.5-flash",
+    "gemini-1.5-flash",
+    "gemini-2.0-flash",
+  ]));
 
-    let text = res.text ? res.text.trim() : "";
-    const parsed = extractToolCallsFromText(text);
+  for (const modelToTry of candidateModels) {
+    try {
+      const res: any = await withTimeout(
+        ai.models.generateContent({
+          model: modelToTry,
+          contents: formattedContents,
+          config: {
+            systemInstruction,
+            temperature: 0.7,
+          },
+        }),
+        20000,
+        `Запит з ${modelToTry} перевищив таймаут`
+      );
 
-    return { text: parsed.cleanText || "Створено об'єкти на полотні.", toolCalls: parsed.toolCalls };
-  } catch (directErr: any) {
-    console.warn("[Gemini Direct Gen Warning]:", directErr?.message || directErr);
-    const errStr = String(directErr);
-    if (errStr.includes("API_KEY_INVALID") || errStr.includes("API key not valid")) {
-      throw directErr;
+      let text = res.text ? res.text.trim() : "";
+      if (text) {
+        const parsed = extractToolCallsFromText(text);
+        return { text: parsed.cleanText || "Створено об'єкти на полотні.", toolCalls: parsed.toolCalls };
+      }
+    } catch (err: any) {
+      console.warn(`[Gemini Fallback ${modelToTry} Warning]:`, err?.message || err);
+      const errStr = String(err);
+      if (errStr.includes("API_KEY_INVALID") || errStr.includes("API key not valid")) {
+        throw err;
+      }
     }
   }
 
-  // Attempt 3: Secondary model fallback (gemini-2.0-flash-lite) (timeout 20s)
-  try {
-    const res: any = await withTimeout(
-      ai.models.generateContent({
-        model: "gemini-2.0-flash-lite",
-        contents: formattedContents,
-        config: {
-          systemInstruction,
-          temperature: 0.7,
-        },
-      }),
-      20000,
-      "Резервна модель перевищила таймаут"
-    );
-
-    let text = res.text ? res.text.trim() : "";
-    const parsed = extractToolCallsFromText(text);
-
-    return { text: parsed.cleanText || "Створено об'єкти на полотні.", toolCalls: parsed.toolCalls };
-  } catch (fallbackErr: any) {
-    console.error("[Gemini Fallback Model Error]:", fallbackErr?.message || fallbackErr);
-    throw fallbackErr;
-  }
-
-  throw new Error("Не вдалося одержати відповідь від Gemini API (порожня відповідь).");
+  throw new Error("Не вдалося одержати відповідь від Gemini API.");
 }
 
 function extractToolCallsFromText(text: string): { cleanText: string; toolCalls: Array<{ name: string; args: any }> } {
@@ -630,38 +665,37 @@ app.post("/api/ai/verify-key", async (req, res) => {
 
     const ai = new GoogleGenAI({ apiKey: activeKey });
     const targetModel = normalizeGeminiModel(model);
-    try {
-      const testRes: any = await withTimeout(
-        ai.models.generateContent({
-          model: targetModel,
-          contents: [{ role: "user", parts: [{ text: "Привіт" }] }],
-        }),
-        10000,
-        "Таймаут перевірки ключа Gemini"
-      );
-      if (testRes.text) {
-        return res.json({ ok: true, message: `Ключ дійсний (${targetModel})` });
-      }
-    } catch (err: any) {
-      const msg = err?.message || String(err);
-      if (msg.includes("API_KEY_INVALID") || msg.includes("API key not valid")) {
-        return res.status(400).json({ ok: false, message: "Недійсний API ключ Gemini (перевірте правильність ключа)." });
-      }
-      if (msg.includes("429") || msg.toLowerCase().includes("quota")) {
-        return res.status(429).json({ ok: false, message: "Перевищено ліміт запитів (Quota exceeded) для цієї моделі або акаунту." });
-      }
-      if (targetModel !== "gemini-2.0-flash") {
-        try {
-          const fallbackRes: any = await ai.models.generateContent({
-            model: "gemini-2.0-flash",
-            contents: [{ role: "user", parts: [{ text: "Привіт" }] }],
+    const candidateModels = Array.from(new Set([
+      targetModel,
+      "gemini-3.6-flash",
+      "gemini-2.5-flash",
+      "gemini-1.5-flash",
+      "gemini-2.0-flash",
+    ]));
+
+    for (const testModel of candidateModels) {
+      try {
+        const testRes: any = await withTimeout(
+          ai.models.generateContent({
+            model: testModel,
+            contents: [{ role: "user", parts: [{ text: "Hi" }] }],
+          }),
+          10000,
+          `Перевірка ${testModel}`
+        );
+        if (testRes.text) {
+          return res.json({
+            ok: true,
+            modelUsed: testModel,
+            message: `Ключ дійсний ✓ (Модель: ${testModel})`,
           });
-          if (fallbackRes.text) {
-            return res.json({ ok: true, message: "Ключ дійсний (для Gemini 2.0 Flash)" });
-          }
-        } catch (fbErr) {}
+        }
+      } catch (err: any) {
+        const msg = String(err?.message || err);
+        if (msg.includes("API_KEY_INVALID") || msg.includes("API key not valid")) {
+          return res.status(400).json({ ok: false, message: "Недійсний API ключ Gemini (перевірте правильність ключа)." });
+        }
       }
-      return res.status(400).json({ ok: false, message: `Помилка Gemini: ${msg.replace(/^Error:\s*/, "")}` });
     }
 
     return res.status(400).json({ ok: false, message: "Не вдалося перевірити ключ Gemini." });
