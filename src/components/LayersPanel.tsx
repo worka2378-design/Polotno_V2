@@ -256,20 +256,86 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
 
   const handleTestKey = async () => {
     const keyToTest = geminiApiKey.trim();
-    setKeyTestState({ testing: true, status: 'idle', message: 'Перевірка ключа через сервер...' });
+    if (!keyToTest) {
+      if (serverAiStatus.hasGeminiKey) {
+        setKeyTestState({ testing: true, status: 'idle', message: 'Перевірка системного ключа...' });
+        try {
+          const res = await fetch('/api/ai/verify-key', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: geminiModel }),
+          });
+          const data = await res.json();
+          if (res.ok && data.ok) {
+            setKeyTestState({ testing: false, status: 'success', message: 'Системний ключ дійсний ✓' });
+            return;
+          }
+        } catch (e) {}
+      }
+      setKeyTestState({ testing: false, status: 'error', message: 'Ключ не вказано.' });
+      return;
+    }
 
+    setKeyTestState({ testing: true, status: 'idle', message: 'Перевірка Gemini ключа...' });
+
+    // 1. Direct browser call to Gemini REST API
+    const candidateModels = Array.from(new Set([
+      cleanModelName(geminiModel),
+      'gemini-2.5-flash',
+      'gemini-1.5-flash',
+      'gemini-2.0-flash',
+    ]));
+
+    for (const testModel of candidateModels) {
+      try {
+        const directRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${testModel}:generateContent?key=${keyToTest}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Hi' }] }] }),
+          }
+        );
+
+        if (directRes.ok) {
+          if (testModel !== geminiModel) {
+            setGeminiModel(testModel);
+            localStorage.setItem('infinite_notepad_gemini_model', testModel);
+          }
+          setKeyTestState({
+            testing: false,
+            status: 'success',
+            message: `Ключ дійсний ✓ (Модель: ${testModel})`,
+          });
+          return;
+        } else {
+          const errData = await directRes.json().catch(() => ({}));
+          const errMsg = errData?.error?.message || `HTTP ${directRes.status}`;
+          if (directRes.status === 400 || directRes.status === 403) {
+            if (errMsg.toLowerCase().includes('key') || errMsg.toLowerCase().includes('invalid')) {
+              setKeyTestState({
+                testing: false,
+                status: 'error',
+                message: 'Недійсний API ключ Gemini (перевірте правильність ключа).',
+              });
+              return;
+            }
+          }
+        }
+      } catch (directErr) {
+        console.warn('Direct browser key test failed, trying server fallback:', directErr);
+      }
+    }
+
+    // 2. Fallback to server endpoint
     try {
       const res = await fetch('/api/ai/verify-key', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey: keyToTest || undefined, model: geminiModel }),
+        body: JSON.stringify({ apiKey: keyToTest, model: geminiModel }),
       });
       const data = await res.json();
       if (res.ok && data.ok) {
-        if (data.modelUsed) {
-          setGeminiModel(data.modelUsed);
-          localStorage.setItem('infinite_notepad_gemini_model', data.modelUsed);
-        }
         setKeyTestState({
           testing: false,
           status: 'success',
@@ -286,7 +352,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
       setKeyTestState({
         testing: false,
         status: 'error',
-        message: 'Помилка мережі при перевірці ключа.',
+        message: 'Не вдалося перевірити ключ. Перевірте підключення до Інтернету або правильність ключа.',
       });
     }
   };
@@ -425,6 +491,88 @@ export const LayersPanel: React.FC<LayersPanelProps> = React.memo(({
     try {
       const apiKey = geminiApiKey.trim();
 
+      // 1. If custom client key is provided, try direct Gemini API call from browser
+      if (apiKey) {
+        const resolvedModel = cleanModelName(geminiModel);
+        const candidateModels = Array.from(new Set([
+          resolvedModel,
+          'gemini-2.5-flash',
+          'gemini-1.5-flash',
+          'gemini-2.0-flash',
+        ]));
+
+        const systemInstruction = `Ти — розумний AI асистент на базі Google Gemini з підтримкою прямого керування полотном.
+
+ТВОЯ РОЛЬ ТА ПРИНЦИПИ ВІДПОВІДІ:
+1. Пряма відповідь без вступів. Завжди відповідай ДИРЕКТНО, чітко, структуровано.
+2. Відповідай на БУДЬ-ЯКІ питання з будь-яких галузей.
+3. Якщо тебе просять створити нотатку, відповідай у форматі: [CREATE_NOTE: Заголовок | Зміст]
+4. Якщо тебе просять SWOT-аналіз: [TOOL_CALL:create_swot_analysis {"projectTitle":"...","strengths":[...],"weaknesses":[...],"opportunities":[...],"threats":[...]}]${
+  contextData.notesSummary && contextData.notesSummary !== 'Полотно порожнє'
+    ? `\n\n[КОНТЕКСТ ПОЛОТНА]:\nВсього нотаток: ${contextData.notesCount}, папок: ${contextData.foldersCount}\n${contextData.notesSummary}`
+    : ''
+}`;
+
+        const geminiContents = sanitizeGeminiContents(updatedMessages);
+
+        for (const currentModel of candidateModels) {
+          try {
+            const reqBody: any = {
+              contents: geminiContents,
+              generationConfig: { temperature: 0.7, maxOutputTokens: 2048 },
+            };
+            if (systemInstruction.trim()) {
+              reqBody.system_instruction = { parts: [{ text: systemInstruction.trim() }] };
+            }
+
+            const directRes = await fetch(
+              `https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent?key=${apiKey}`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(reqBody),
+              }
+            );
+
+            if (directRes.ok) {
+              const data = await directRes.json();
+              const replyText = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || 'Вибачте, не вдалося одержати відповідь.';
+              
+              let actionNote: { title: string; content: string } | undefined;
+              const createNoteMatch = replyText.match(/\[CREATE_NOTE:\s*([^|]+)\|\s*([^\]]+)\]/);
+              if (createNoteMatch) {
+                actionNote = { title: createNoteMatch[1].trim(), content: createNoteMatch[2].trim() };
+                if (onCreateNoteFromAI) onCreateNoteFromAI(actionNote.title, actionNote.content);
+              }
+
+              const toolCallRegex = /\[TOOL_CALL:([a-zA-Z0-9_]+)\s*(\{[\s\S]*?\})\]/g;
+              let tcMatch;
+              while ((tcMatch = toolCallRegex.exec(replyText)) !== null) {
+                try {
+                  const tc = { name: tcMatch[1], args: JSON.parse(tcMatch[2]) };
+                  if (onExecuteAiToolCall) onExecuteAiToolCall(tc);
+                } catch (e) {}
+              }
+
+              const assistantMsg: AIChatMessage = {
+                id: `msg_${Date.now()}_a`,
+                role: 'assistant',
+                content: replyText.replace(/\[CREATE_NOTE:[^\]]+\]/g, '').replace(/\[TOOL_CALL:[^\]]+\]/g, '').trim(),
+                timestamp: Date.now(),
+                provider: 'gemini',
+                actionNote,
+              };
+              setAiMessages((prev) => [...prev, assistantMsg]);
+              setIsAiLoading(false);
+              return;
+            }
+          } catch (directErr) {
+            console.warn(`Direct Gemini browser fetch with ${currentModel} failed:`, directErr);
+          }
+        }
+      }
+
+      // 2. Server endpoint fallback
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
